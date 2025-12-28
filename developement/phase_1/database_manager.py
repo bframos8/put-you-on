@@ -59,6 +59,32 @@ class DatabaseManager:
             print(f"Inserted row into {table_name} successfully.")
         except psycopg.Error as e:
             print(f"An error inserting row occurred: {e}")
+    
+    def insert_row_and_return_id(self, table_name: str, column_names: list[str], data: list) -> int:
+        if not data:
+            raise ValueError("Data list is empty. Cannot insert row without data.")
+        if not table_name:
+            raise ValueError("Table name is empty. Cannot insert row without a table name.")
+        if not column_names:
+            raise ValueError("Column names list is empty. Cannot insert row without column names.")
+        if len(column_names) != len(data):
+            raise ValueError("Column names count does not match data count.")
+        
+        query = sql.SQL('INSERT INTO {tableName} ({columnNames}) VALUES ({placeholders}) RETURNING id;').format(
+            tableName = sql.Identifier(table_name), 
+            columnNames = sql.SQL(', ').join(sql.Identifier(col) for col in column_names),
+            placeholders = sql.SQL(', ').join(sql.Placeholder() for _ in data)
+        )
+        
+        try:
+            self.cur.execute(query, data)
+            returned_id = self.cur.fetchone()[0]
+            self.conn.commit()
+            print(f"Inserted row into {table_name} successfully with ID {returned_id}.")
+            return returned_id
+        except psycopg.Error as e:
+            print(f"An error inserting row occurred: {e}")
+            return -1
 
     def get_all_scraped_links(self) -> list:
         try:
