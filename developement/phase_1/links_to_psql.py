@@ -34,6 +34,9 @@ if __name__ == "__main__":
             )
             artist_cache[external_id] = db_artist_id
         
+        album_url = item.get("item_url").partition("?")[0]
+        
+        
         
         db_manager.insert_row(
             table_name="albums",
@@ -50,7 +53,7 @@ if __name__ == "__main__":
                 item.get("band_name"),
                 item.get("item_duration"),
                 item.get("release_date"),
-                item.get("item_url").partition("?")[0],
+                album_url,
                 db_artist_id,
                 "not_started"
             ]
