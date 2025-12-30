@@ -1,4 +1,4 @@
-from database_manager import DatabaseManager
+from local.tools.database_manager import DatabaseManager
 import psycopg
 from psycopg import sql
 

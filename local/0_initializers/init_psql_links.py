@@ -1,5 +1,5 @@
-from database_manager import DatabaseManager
-from database_initializer import DatabaseInitializer
+from local.tools.database_manager import DatabaseManager
+from local.tools.database_initializer import DatabaseInitializer
 
 DB_NAME = "put_you_on_db"
 USER = "ramos"

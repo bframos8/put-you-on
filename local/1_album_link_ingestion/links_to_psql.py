@@ -1,5 +1,5 @@
 from bandcamp_crawler import BandcampCrawler
-from database_manager import DatabaseManager
+from local.tools.database_manager import DatabaseManager
 
 if __name__ == "__main__":
     crawler = BandcampCrawler()
