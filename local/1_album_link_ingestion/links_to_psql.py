@@ -1,4 +1,4 @@
-from bandcamp_crawler import BandcampCrawler
+from local.tools.bandcamp_crawler import BandcampCrawler
 from local.tools.database_manager import DatabaseManager
 
 if __name__ == "__main__":

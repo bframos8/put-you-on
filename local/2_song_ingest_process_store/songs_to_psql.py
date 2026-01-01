@@ -1,26 +1,24 @@
-from local.tools.song_embedder import SongEmbedder
+from song_embedder import SongEmbedder
+from song_downloader import SongDownloader
+from song_dbwriter import SongDBWriter
 from local.tools.database_manager import DatabaseManager
-import subprocess
-
-def run_bandcamp_downloader(link:str):
-    subprocess.run([
-        "bandcamp-dl",
-        "--base-dir",
-        "./songs",
-        f'{link}',
-    ])
+from queue import Queue
 
 if __name__ == "__main__":
-    embedder = SongEmbedder()
+   
+    audio_queue = Queue(maxsize=32)
+    embed_queue = Queue(maxsize=64)
     
-    db_manager = DatabaseManager(
-        db_name="put_you_on_db",
-        user="ramos",
-        password="",
-        host="localhost",
-        port="5432"
-    )
+    downloader = SongDownloader(audio_queue)
+    embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16)
+    db_writer = SongDBWriter(embed_queue, batch_size=100)
     
-    db_manager.connect()
+    downloader.start()
+    embedder.start()
+    db_writer.start()
     
-    
+    downloader.join()
+    audio_queue.put(None)  # Signal embedder to stop
+    embedder.join()
+    embed_queue.put(None)  # Signal db_writer to stop
+    db_writer.join()

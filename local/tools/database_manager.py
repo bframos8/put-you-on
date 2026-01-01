@@ -86,11 +86,11 @@ class DatabaseManager:
             print(f"An error inserting row occurred: {e}")
             return -1
 
-    def get_all_scraped_links(self) -> list:
+    def execute_query(self, query: str) -> list:
         try:
-            self.cur.execute("SELECT * FROM scraped_links")
-            links = self.cur.fetchall()
-            return links
+            self.cur.execute(query)
+            results = self.cur.fetchall()
+            return results
         except psycopg.Error as e:
             print(f"An error occurred: {e}")
             return []
