@@ -94,3 +94,33 @@ class DatabaseManager:
         except psycopg.Error as e:
             print(f"An error occurred: {e}")
             return []
+
+    def insert_rows(self, table_name: str, column_names: list[str], rows: list[tuple]) -> None:
+        """Batch insert multiple rows into a table.
+
+        Args:
+            table_name: Name of the table to insert into
+            column_names: List of column names
+            rows: List of tuples, each tuple containing values for one row
+        """
+        if not rows:
+            raise ValueError("Rows list is empty. Cannot insert without data.")
+        if not table_name:
+            raise ValueError("Table name is empty. Cannot insert without a table name.")
+        if not column_names:
+            raise ValueError("Column names list is empty. Cannot insert without column names.")
+
+        query = sql.SQL('INSERT INTO {table} ({columns}) VALUES ({placeholders})').format(
+            table=sql.Identifier(table_name),
+            columns=sql.SQL(', ').join(sql.Identifier(col) for col in column_names),
+            placeholders=sql.SQL(', ').join(sql.Placeholder() for _ in column_names)
+        )
+
+        try:
+            self.cur.executemany(query, rows)
+            self.conn.commit()
+            print(f"Inserted {len(rows)} rows into {table_name} successfully.")
+        except psycopg.Error as e:
+            self.conn.rollback()
+            print(f"An error inserting rows occurred: {e}")
+            raise

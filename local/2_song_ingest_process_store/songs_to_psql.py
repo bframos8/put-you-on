@@ -1,7 +1,6 @@
 from song_embedder import SongEmbedder
 from song_downloader import SongDownloader
 from song_dbwriter import SongDBWriter
-from local.tools.database_manager import DatabaseManager
 from queue import Queue
 
 if __name__ == "__main__":
@@ -16,9 +15,7 @@ if __name__ == "__main__":
     downloader.start()
     embedder.start()
     db_writer.start()
-    
+
     downloader.join()
-    audio_queue.put(None)  # Signal embedder to stop
     embedder.join()
-    embed_queue.put(None)  # Signal db_writer to stop
     db_writer.join()

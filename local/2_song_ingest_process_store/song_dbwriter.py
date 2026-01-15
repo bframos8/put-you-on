@@ -38,12 +38,12 @@ class SongDBWriter(PipelineStage):
     def _flush(self, buffer: list[EmbeddingWithMetadata]) -> None:
         """Insert songs with metadata into database"""
         # Prepare data for batch insert
-        values = []
+        rows = []
         for item in buffer:
             # Extract song filename as title (you may want to parse this differently)
             song_title = item.file_path.stem
 
-            values.append((
+            rows.append((
                 item.metadata.album_id,  # Foreign key to albums table
                 song_title,
                 item.metadata.artist_name,
@@ -52,7 +52,8 @@ class SongDBWriter(PipelineStage):
             ))
 
         # Batch insert
-        self.db_manager.execute_query(
-            "INSERT INTO songs (album_id, title, artist_name, album_name, embedding) VALUES %s",
-            values
+        self.db_manager.insert_rows(
+            "songs",
+            ["album_id", "title", "artist_name", "album_name", "embedding"],
+            rows
         )
