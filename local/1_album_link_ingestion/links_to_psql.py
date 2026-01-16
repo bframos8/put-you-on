@@ -1,17 +1,31 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
 from local.tools.bandcamp_crawler import BandcampCrawler
 from local.tools.database_manager import DatabaseManager
+
+# Load environment variables from .env-postgres in project root
+env_path = Path(__file__).resolve().parents[2] / ".env-postgres"
+load_dotenv(dotenv_path=env_path)
+
+DB_NAME = os.getenv("POSTGRES_DB")
+USER = os.getenv("POSTGRES_USER")
+PASSWORD = os.getenv("POSTGRES_PASSWORD")
+HOST = os.getenv("POSTGRES_HOST", "localhost")
+PORT = os.getenv("POSTGRES_PORT", "5432")
 
 if __name__ == "__main__":
     crawler = BandcampCrawler()
     crawler.run()
     payload = crawler.get_discover_payloads()
-    
+
     db_manager = DatabaseManager(
-        db_name="put_you_on_db",
-        user="ramos",
-        password="",
-        host="localhost",
-        port="5432"
+        db_name=DB_NAME,
+        user=USER,
+        password=PASSWORD,
+        host=HOST,
+        port=PORT
     )
     
     db_manager.connect()

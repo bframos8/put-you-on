@@ -3,7 +3,7 @@ import psycopg
 from psycopg import sql
 
 class DatabaseInitializer:
-    def __init__(self, database_manager: DatabaseManager.DatabaseManager):
+    def __init__(self, database_manager: DatabaseManager):
         # Initialize DatabaseManager to handle connections, using dependency injection
         self.database_manager = database_manager
         self.conn = self.database_manager.conn
@@ -34,13 +34,22 @@ class DatabaseInitializer:
             raise ValueError("Values list is empty. Cannot create type without values.")
         if not type_name:
             raise ValueError("Type name is empty. Cannot create type without a name.")
-        
+
+        # Check if type already exists
+        self.cur.execute(
+            "SELECT 1 FROM pg_type WHERE typname = %s",
+            (type_name,)
+        )
+        if self.cur.fetchone():
+            print(f"Type '{type_name}' already exists, skipping.")
+            return
+
         enum_values = sql.SQL(", ").join(
             sql.Literal(value) for value in values
             )
-        query = sql.SQL('CREATE TYPE IF NOT EXISTS {typeName} AS ENUM ({enumValues});'
+        query = sql.SQL('CREATE TYPE {typeName} AS ENUM ({enumValues});'
                         ).format(
-                            typeName = sql.Identifier(type_name), 
+                            typeName = sql.Identifier(type_name),
                             enumValues = enum_values)
 
         try:

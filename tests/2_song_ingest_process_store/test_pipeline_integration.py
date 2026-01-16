@@ -5,11 +5,26 @@ from queue import Queue
 import numpy as np
 import threading
 import time
-
 import sys
+
+# Must mock essentia BEFORE importing any pipeline modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "local" / "2_song_ingest_process_store"))
 
-from local.tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
+# Create mock essentia module before any imports that need it
+mock_loader_instance = MagicMock()
+mock_loader_instance.return_value = np.zeros(16000)
+
+mock_model_instance = MagicMock()
+mock_model_instance.return_value = np.random.rand(10, 1280)
+
+mock_essentia_standard = MagicMock()
+mock_essentia_standard.MonoLoader.return_value = mock_loader_instance
+mock_essentia_standard.TensorflowPredictEffnetDiscogs.return_value = mock_model_instance
+
+sys.modules['essentia'] = MagicMock()
+sys.modules['essentia.standard'] = mock_essentia_standard
+
+from tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
 
 
 @pytest.fixture

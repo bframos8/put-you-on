@@ -3,11 +3,27 @@ from unittest.mock import Mock, MagicMock, patch
 from pathlib import Path
 from queue import Queue
 import numpy as np
-
 import sys
+
+# Must mock essentia BEFORE importing song_embedder
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "local" / "2_song_ingest_process_store"))
 
-from local.tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
+# Create mock essentia module before any imports that need it
+mock_loader_instance = MagicMock()
+mock_loader_instance.return_value = np.zeros(16000)
+
+mock_model_instance = MagicMock()
+mock_model_instance.return_value = np.random.rand(10, 1280)
+
+mock_essentia_standard = MagicMock()
+mock_essentia_standard.MonoLoader.return_value = mock_loader_instance
+mock_essentia_standard.TensorflowPredictEffnetDiscogs.return_value = mock_model_instance
+
+sys.modules['essentia'] = MagicMock()
+sys.modules['essentia.standard'] = mock_essentia_standard
+
+from tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
+from song_embedder import SongEmbedder
 
 
 @pytest.fixture
@@ -22,31 +38,28 @@ def output_queue():
 
 @pytest.fixture
 def mock_essentia():
-    """Mock essentia MonoLoader and TensorflowPredictEffnetDiscogs."""
-    with patch('song_embedder.MonoLoader') as MockLoader, \
-         patch('song_embedder.TensorflowPredictEffnetDiscogs') as MockModel:
+    """Provide access to the mocked essentia components."""
+    # Reset mock call counts for each test
+    mock_loader_instance.reset_mock()
+    mock_model_instance.reset_mock()
+    mock_essentia_standard.MonoLoader.reset_mock()
+    mock_essentia_standard.TensorflowPredictEffnetDiscogs.reset_mock()
 
-        mock_loader_instance = MagicMock()
-        mock_loader_instance.return_value = np.zeros(16000)  # 1 second of audio at 16kHz
-        MockLoader.return_value = mock_loader_instance
+    # Reset return values
+    mock_loader_instance.return_value = np.zeros(16000)
+    mock_model_instance.return_value = np.random.rand(10, 1280)
 
-        mock_model_instance = MagicMock()
-        # Model returns frame embeddings (e.g., 10 frames x 1280 dimensions)
-        mock_model_instance.return_value = np.random.rand(10, 1280)
-        MockModel.return_value = mock_model_instance
-
-        yield {
-            'loader_class': MockLoader,
-            'loader_instance': mock_loader_instance,
-            'model_class': MockModel,
-            'model_instance': mock_model_instance,
-        }
+    return {
+        'loader_class': mock_essentia_standard.MonoLoader,
+        'loader_instance': mock_loader_instance,
+        'model_class': mock_essentia_standard.TensorflowPredictEffnetDiscogs,
+        'model_instance': mock_model_instance,
+    }
 
 
 @pytest.fixture
 def embedder(mock_essentia, input_queue, output_queue):
     """Create a SongEmbedder with mocked dependencies."""
-    from song_embedder import SongEmbedder
     return SongEmbedder(input_queue, output_queue, batch_size=2)
 
 

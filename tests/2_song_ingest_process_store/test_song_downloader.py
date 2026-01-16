@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "local" / "2_song_ingest_process_store"))
 
 from song_downloader import SongDownloader, DOWNLOADS_DIR
-from local.tools.datamodels import AlbumMetadata, AudioWithMetadata
+from tools.datamodels import AlbumMetadata, AudioWithMetadata
 
 
 @pytest.fixture

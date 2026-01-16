@@ -1,8 +1,21 @@
+import os
 import subprocess
+from pathlib import Path
+from dotenv import load_dotenv
+
 from tools.datamodels import AlbumMetadata, AudioWithMetadata
 from pipeline_stage import PipelineStage
 from tools.database_manager import DatabaseManager
-from pathlib import Path
+
+# Load environment variables from .env-postgres in project root
+env_path = Path(__file__).resolve().parents[2] / ".env-postgres"
+load_dotenv(dotenv_path=env_path)
+
+DB_NAME = os.getenv("POSTGRES_DB")
+USER = os.getenv("POSTGRES_USER")
+PASSWORD = os.getenv("POSTGRES_PASSWORD")
+HOST = os.getenv("POSTGRES_HOST", "localhost")
+PORT = os.getenv("POSTGRES_PORT", "5432")
 
 DOWNLOADS_DIR = Path(__file__).parent / "downloads"
 
@@ -10,11 +23,11 @@ class SongDownloader(PipelineStage):
     def __init__(self, output_queue):
         super().__init__(name="SongDownloader")
         self.db_manager = DatabaseManager(
-            db_name="put_you_on_db",
-            user="ramos",
-            password="",
-            host="localhost",
-            port="5432"
+            db_name=DB_NAME,
+            user=USER,
+            password=PASSWORD,
+            host=HOST,
+            port=PORT
         )
         self.db_manager.connect()
         self.output_queue = output_queue
