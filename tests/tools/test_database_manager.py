@@ -181,3 +181,93 @@ class TestExecuteQuery:
         results = db_manager.execute_query("SELECT * FROM test_table")
 
         assert results == []
+
+
+class TestUpsertRow:
+    def test_upsert_row_success(self, db_manager, mock_connection):
+        mock_conn, mock_cur = mock_connection
+        db_manager.conn = mock_conn
+        db_manager.cur = mock_cur
+
+        db_manager.upsert_row(
+            "test_table", ["col1", "col2"], ["val1", "val2"], "col1"
+        )
+
+        mock_cur.execute.assert_called_once()
+        mock_conn.commit.assert_called_once()
+
+    def test_upsert_row_empty_data_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Data list is empty"):
+            db_manager.upsert_row("test_table", ["col1"], [], "col1")
+
+    def test_upsert_row_empty_table_name_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Table name is empty"):
+            db_manager.upsert_row("", ["col1"], ["val1"], "col1")
+
+    def test_upsert_row_empty_columns_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Column names list is empty"):
+            db_manager.upsert_row("test_table", [], ["val1"], "col1")
+
+    def test_upsert_row_mismatched_columns_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Column names count does not match"):
+            db_manager.upsert_row("test_table", ["col1", "col2"], ["val1"], "col1")
+
+    def test_upsert_row_empty_conflict_column_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Conflict column is empty"):
+            db_manager.upsert_row("test_table", ["col1"], ["val1"], "")
+
+
+class TestUpsertRowAndReturnId:
+    def test_upsert_row_and_return_id_new_row(self, db_manager, mock_connection):
+        mock_conn, mock_cur = mock_connection
+        mock_cur.fetchone.return_value = (42,)
+        db_manager.conn = mock_conn
+        db_manager.cur = mock_cur
+
+        result = db_manager.upsert_row_and_return_id(
+            "test_table", ["col1", "col2"], ["val1", "val2"], "col1"
+        )
+
+        assert result == 42
+        mock_conn.commit.assert_called_once()
+
+    def test_upsert_row_and_return_id_existing_row(self, db_manager, mock_connection):
+        mock_conn, mock_cur = mock_connection
+        # First fetchone returns None (conflict, no insert), second returns existing ID
+        mock_cur.fetchone.side_effect = [None, (99,)]
+        db_manager.conn = mock_conn
+        db_manager.cur = mock_cur
+
+        result = db_manager.upsert_row_and_return_id(
+            "test_table", ["col1", "col2"], ["val1", "val2"], "col1"
+        )
+
+        assert result == 99
+        # Should have called execute twice: once for insert, once for select
+        assert mock_cur.execute.call_count == 2
+
+    def test_upsert_row_and_return_id_empty_data_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Data list is empty"):
+            db_manager.upsert_row_and_return_id("test_table", ["col1"], [], "col1")
+
+    def test_upsert_row_and_return_id_empty_conflict_column_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Conflict column is empty"):
+            db_manager.upsert_row_and_return_id("test_table", ["col1"], ["val1"], "")
+
+    def test_upsert_row_and_return_id_conflict_column_not_in_columns_raises(self, db_manager):
+        with pytest.raises(ValueError, match="Conflict column 'col2' not found"):
+            db_manager.upsert_row_and_return_id(
+                "test_table", ["col1"], ["val1"], "col2"
+            )
+
+    def test_upsert_row_and_return_id_on_error(self, db_manager, mock_connection):
+        mock_conn, mock_cur = mock_connection
+        mock_cur.execute.side_effect = psycopg.Error("upsert failed")
+        db_manager.conn = mock_conn
+        db_manager.cur = mock_cur
+
+        result = db_manager.upsert_row_and_return_id(
+            "test_table", ["col1"], ["val1"], "col1"
+        )
+
+        assert result == -1

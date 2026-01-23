@@ -17,6 +17,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pytest_cache
 
 # Virtual environments (custom names included)
 .venv/

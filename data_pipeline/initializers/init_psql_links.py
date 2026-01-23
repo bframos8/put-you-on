@@ -41,7 +41,7 @@ def init_pyo_db():
     db_manager.cur.execute("""
         CREATE TABLE IF NOT EXISTS artists (
             id SERIAL PRIMARY KEY,
-            bandcamp_band_id INTEGER,
+            bandcamp_band_id BIGINT UNIQUE,
             url TEXT,
             band_name TEXT,
             band_location TEXT
@@ -55,7 +55,7 @@ def init_pyo_db():
         CREATE TABLE IF NOT EXISTS albums (
             id SERIAL PRIMARY KEY,
             title TEXT DEFAULT 'Void',
-            external_source_id INTEGER,
+            external_source_id BIGINT UNIQUE,
             source TEXT,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP,

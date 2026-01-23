@@ -3,9 +3,9 @@ import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
 
-from tools.datamodels import AlbumMetadata, AudioWithMetadata
+from data_pipeline.tools.datamodels import AlbumMetadata, AudioWithMetadata
 from pipeline_stage import PipelineStage
-from tools.database_manager import DatabaseManager
+from data_pipeline.tools.database_manager import DatabaseManager
 
 # Load environment variables from .env-postgres in project root
 env_path = Path(__file__).resolve().parents[2] / ".env-postgres"

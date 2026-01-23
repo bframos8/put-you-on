@@ -1,6 +1,6 @@
-from song_embedder import SongEmbedder
-from song_downloader import SongDownloader
-from song_dbwriter import SongDBWriter
+from data_pipeline.song_pipeline.song_embedder import SongEmbedder
+from data_pipeline.song_pipeline.song_downloader import SongDownloader
+from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
 from queue import Queue
 
 if __name__ == "__main__":
