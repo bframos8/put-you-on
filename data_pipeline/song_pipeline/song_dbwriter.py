@@ -2,9 +2,9 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from tools.database_manager import DatabaseManager
-from tools.datamodels import EmbeddingWithMetadata
-from pipeline_stage import PipelineStage
+from data_pipeline.tools.database_manager import DatabaseManager
+from data_pipeline.tools.datamodels import EmbeddingWithMetadata
+from data_pipeline.song_pipeline.pipeline_stage import PipelineStage
 from queue import Queue
 
 # Load environment variables from .env-postgres in project root
@@ -40,10 +40,12 @@ class SongDBWriter(PipelineStage):
             if item is None:
                 break
 
+            print(f'Adding {item.metadata.title} to DB buffer.')
             buffer.append(item)
 
             if len(buffer) >= self.batch_size:
                 self._flush(buffer)
+                print("Songs fully processed")
                 buffer.clear()
 
         if buffer:
@@ -53,9 +55,11 @@ class SongDBWriter(PipelineStage):
         """Insert songs with metadata into database"""
         # Prepare data for batch insert
         rows = []
+        album_ids = set()
         for item in buffer:
             # Extract song filename as title (you may want to parse this differently)
             song_title = item.file_path.stem
+            album_ids.add(item.metadata.album_id)
 
             rows.append((
                 item.metadata.album_id,  # Foreign key to albums table
@@ -68,6 +72,9 @@ class SongDBWriter(PipelineStage):
         # Batch insert
         self.db_manager.insert_rows(
             "songs",
-            ["album_id", "title", "artist_name", "album_name", "embedding"],
+            ["album_id", "title", "artist_name", "album_title", "embedding"],
             rows
         )
+
+        # Mark all processed albums as completed
+        self.db_manager.update_rows_by_ids("albums", "work_status", "completed", list(album_ids))

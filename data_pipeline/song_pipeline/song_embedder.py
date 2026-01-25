@@ -1,10 +1,13 @@
 import os
 import numpy as np
+import essentia
 from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs
-from tools.datamodels import AudioWithMetadata, EmbeddingWithMetadata
-from pipeline_stage import PipelineStage
 
-GRAPH_FILE_PATH = os.path.join('tools', 'discogs-effnet-bs64.pb')
+essentia.log.warningActive = False
+from data_pipeline.tools.datamodels import AudioWithMetadata, EmbeddingWithMetadata
+from data_pipeline.song_pipeline.pipeline_stage import PipelineStage
+
+GRAPH_FILE_PATH = os.path.join('data_pipeline', 'tools', 'discogs-effnet-bs64-1.pb')
 
 class SongEmbedder(PipelineStage):
     def __init__(self, input_queue, output_queue, batch_size: int):
@@ -12,8 +15,7 @@ class SongEmbedder(PipelineStage):
         self.input_queue = input_queue
         self.output_queue = output_queue
         self.batch_size = batch_size
-        self.loader = MonoLoader()
-        self.model = TensorflowPredictEffnetDiscogs(graphFileName=GRAPH_FILE_PATH, output='PartitionedCall:1')
+        self.model = TensorflowPredictEffnetDiscogs(graphFilename=GRAPH_FILE_PATH, output='PartitionedCall:1')
 
     def run(self):
         buffer = []
@@ -40,11 +42,13 @@ class SongEmbedder(PipelineStage):
             )
 
             # Add to buffer
+            print(f'Embedded {embedding_with_metadata.metadata.title}')
             buffer.append(embedding_with_metadata)
 
             # Flush if batch size reached
             if len(buffer) >= self.batch_size:
                 self._flush(buffer)
+                print("Flushed embedd buffer")
                 buffer.clear()
 
         # Flush remaining items
@@ -55,8 +59,8 @@ class SongEmbedder(PipelineStage):
         self.output_queue.put(None)
 
     def _load_song(self, filepath: str):
-        song = self.loader(filename=filepath, samplerate=16000, resampleQuality=4)
-        return song
+        loader = MonoLoader(filename=filepath, sampleRate=16000, resampleQuality=4)
+        return loader()
 
     def _embed_song(self, song):
         frame_embeddings = self.model(song)

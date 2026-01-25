@@ -95,6 +95,35 @@ class DatabaseManager:
             print(f"An error occurred: {e}")
             return []
 
+    def update_rows_by_ids(self, table_name: str, column_name: str, value: str, ids: list[int]) -> None:
+        """Update a column value for multiple rows by their IDs.
+
+        Args:
+            table_name: Name of the table to update
+            column_name: Name of the column to update
+            value: The new value to set
+            ids: List of row IDs to update
+        """
+        if not ids:
+            return
+        if not table_name:
+            raise ValueError("Table name is empty.")
+        if not column_name:
+            raise ValueError("Column name is empty.")
+
+        query = sql.SQL('UPDATE {table} SET {column} = %s WHERE id = ANY(%s)').format(
+            table=sql.Identifier(table_name),
+            column=sql.Identifier(column_name)
+        )
+
+        try:
+            self.cur.execute(query, [value, ids])
+            self.conn.commit()
+            print(f"Updated {self.cur.rowcount} rows in {table_name}.")
+        except psycopg.Error as e:
+            self.conn.rollback()
+            print(f"An error updating rows occurred: {e}")
+
     def insert_rows(self, table_name: str, column_names: list[str], rows: list[tuple]) -> None:
         """Batch insert multiple rows into a table.
 

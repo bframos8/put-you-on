@@ -5,12 +5,12 @@ from queue import Queue
 
 if __name__ == "__main__":
    
-    audio_queue = Queue(maxsize=32)
-    embed_queue = Queue(maxsize=64)
+    audio_queue = Queue(maxsize=10)
+    embed_queue = Queue(maxsize=10)
     
     downloader = SongDownloader(audio_queue)
-    embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16)
-    db_writer = SongDBWriter(embed_queue, batch_size=100)
+    embedder = SongEmbedder(audio_queue, embed_queue, batch_size=10)
+    db_writer = SongDBWriter(embed_queue, batch_size=10)
     
     downloader.start()
     embedder.start()

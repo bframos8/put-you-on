@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from data_pipeline.tools.datamodels import AlbumMetadata, AudioWithMetadata
-from pipeline_stage import PipelineStage
+from data_pipeline.song_pipeline.pipeline_stage import PipelineStage
 from data_pipeline.tools.database_manager import DatabaseManager
 
 # Load environment variables from .env-postgres in project root
@@ -53,13 +53,14 @@ class SongDownloader(PipelineStage):
                     file_path=audio_file_path,
                     metadata=metadata
                 )
+                print(f'Downloaded {audio_with_metadata.metadata.title} at {audio_with_metadata.file_path}')
                 self.output_queue.put(audio_with_metadata)
 
         # Signal end of processing
         self.output_queue.put(None)
 
     def _get_albums_to_download(self):
-        query = "SELECT id, title, artist_name, url FROM albums WHERE download_status_enum = 'pending';"
+        query = "SELECT id, title, artist_name, url FROM albums WHERE work_status = 'pending' LIMIT 10;"
         results = self.db_manager.execute_query(query)
         return [row for row in results]
 
