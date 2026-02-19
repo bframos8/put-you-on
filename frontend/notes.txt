@@ -1,0 +1,4 @@
+Public holds static files like images
+.svg .jpeg etc
+
+src holds real code using app router
