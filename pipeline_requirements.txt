@@ -4,7 +4,6 @@ certifi==2025.11.12
 charset-normalizer==3.4.4
 demjson3==3.0.6
 dotenv==0.9.9
-essentia==2.1b6.dev1389
 essentia-tensorflow==2.1b6.dev1389
 greenlet==3.3.0
 idna==3.11

@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from local.tools.database_manager import DatabaseManager
-from local.tools.database_initializer import DatabaseInitializer
+from data_pipeline.tools.database_manager import DatabaseManager
+from data_pipeline.tools.database_initializer import DatabaseInitializer
 
 # Load environment variables from .env-postgres in project root
 env_path = Path(__file__).resolve().parents[2] / ".env-postgres"

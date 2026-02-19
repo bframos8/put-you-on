@@ -1,4 +1,4 @@
-from local.tools.database_manager import DatabaseManager
+from data_pipeline.tools.database_manager import DatabaseManager
 import psycopg
 from psycopg import sql
 
