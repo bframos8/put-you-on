@@ -50,6 +50,9 @@ def init_pyo_db():
     db_manager.conn.commit()
     print("Table 'artists' created successfully.")
 
+    # Drop and recreate the songs table with correct embedding vector size
+    db_manager.cur.execute("DROP TABLE IF EXISTS albums CASCADE;")
+    db_manager.conn.commit()
     # Create the albums table
     db_manager.cur.execute("""
         CREATE TABLE IF NOT EXISTS albums (
@@ -64,7 +67,8 @@ def init_pyo_db():
             release_date TEXT,
             artist_name TEXT,
             artist_id INTEGER REFERENCES artists(id),
-            work_status work_status_enum DEFAULT 'pending'
+            work_status work_status_enum DEFAULT 'pending',
+            image_url TEXT
         );
     """)
     db_manager.conn.commit()

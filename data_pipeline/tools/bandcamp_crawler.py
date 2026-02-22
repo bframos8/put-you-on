@@ -44,7 +44,7 @@ class BandcampCrawler:
         max_stale_attempts = 100
         prev_payload_count = 0
 
-        while len(self.discover_payloads) < 10000:
+        while len(self.discover_payloads) < 100:
             print(f'Prev payload: {prev_payload_count}')
             print(f'Current payload: {len(self.discover_payloads)}')
             prev_payload_count = len(self.discover_payloads)

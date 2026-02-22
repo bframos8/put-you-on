@@ -46,6 +46,7 @@ export default function Dashboard() {
         <h1 className="text-2xl font-bold text-white">
           Welcome, {user.display_name}
         </h1>
+        <iframe className="border-0 w-350px h-470px;" src="https://bandcamp.com/EmbeddedPlayer/album=1797632019/size=large/bgcol=ffffff/linkcol=0687f5/tracklist=false/transparent=true/" seamless><a href="https://togetherforpalestine.bandcamp.com/album/lullaby">Lullaby by TOGETHER FOR PALESTINE, NAI BARGHOUTI, LEIGH-ANNE &amp; NENEH CHERRY</a></iframe>
         <SongRecCarousel/>
         <p className="mt-2 text-emerald-400">{user.email}</p>
       </main>
