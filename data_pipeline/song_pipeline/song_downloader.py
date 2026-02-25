@@ -60,7 +60,11 @@ class SongDownloader(PipelineStage):
         self.output_queue.put(None)
 
     def _get_albums_to_download(self):
-        query = "SELECT id, title, artist_name, url FROM albums WHERE work_status = 'pending' LIMIT 10;"
+        query = """
+            UPDATE albums SET work_status = 'in_progress'
+            WHERE work_status IN ('pending', 'in_progress')
+            RETURNING id, title, artist_name, url;
+        """
         results = self.db_manager.execute_query(query)
         return [row for row in results]
 
@@ -70,6 +74,7 @@ class SongDownloader(PipelineStage):
 
         subprocess.run([
             "bandcamp-dl",
+            "-n",
             "--base-dir",
             str(album_dir),
             url,

@@ -1,14 +1,11 @@
 import pytest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 from queue import Queue
 import numpy as np
 import sys
 
-# Must mock essentia BEFORE importing song_embedder
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "local" / "2_song_ingest_process_store"))
-
-# Create mock essentia module before any imports that need it
+# Must mock essentia BEFORE importing song_embedder since it's imported at module level
 mock_loader_instance = MagicMock()
 mock_loader_instance.return_value = np.zeros(16000)
 
@@ -22,8 +19,8 @@ mock_essentia_standard.TensorflowPredictEffnetDiscogs.return_value = mock_model_
 sys.modules['essentia'] = MagicMock()
 sys.modules['essentia.standard'] = mock_essentia_standard
 
-from tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
-from song_embedder import SongEmbedder
+from data_pipeline.tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
+from data_pipeline.song_pipeline.song_embedder import SongEmbedder
 
 
 @pytest.fixture
@@ -38,14 +35,12 @@ def output_queue():
 
 @pytest.fixture
 def mock_essentia():
-    """Provide access to the mocked essentia components."""
-    # Reset mock call counts for each test
+    """Reset mock call counts for each test."""
     mock_loader_instance.reset_mock()
     mock_model_instance.reset_mock()
     mock_essentia_standard.MonoLoader.reset_mock()
     mock_essentia_standard.TensorflowPredictEffnetDiscogs.reset_mock()
 
-    # Reset return values
     mock_loader_instance.return_value = np.zeros(16000)
     mock_model_instance.return_value = np.random.rand(10, 1280)
 
@@ -59,7 +54,6 @@ def mock_essentia():
 
 @pytest.fixture
 def embedder(mock_essentia, input_queue, output_queue):
-    """Create a SongEmbedder with mocked dependencies."""
     return SongEmbedder(input_queue, output_queue, batch_size=2)
 
 
@@ -77,102 +71,95 @@ def sample_metadata():
 def sample_audio_with_metadata(sample_metadata, tmp_path):
     audio_file = tmp_path / "test_track.mp3"
     audio_file.touch()
-    return AudioWithMetadata(
-        file_path=audio_file,
-        metadata=sample_metadata
-    )
+    return AudioWithMetadata(file_path=audio_file, metadata=sample_metadata)
 
 
 class TestLoadSong:
-    def test_load_song(self, embedder, mock_essentia, tmp_path):
+    def test_load_song_calls_mono_loader_with_correct_args(self, embedder, mock_essentia, tmp_path):
+        audio_file = tmp_path / "test.mp3"
+        audio_file.touch()
+
+        embedder._load_song(str(audio_file))
+
+        mock_essentia['loader_class'].assert_called_once_with(
+            filename=str(audio_file),
+            sampleRate=16000,
+            resampleQuality=4
+        )
+
+    def test_load_song_returns_audio_array(self, embedder, mock_essentia, tmp_path):
         audio_file = tmp_path / "test.mp3"
         audio_file.touch()
 
         result = embedder._load_song(str(audio_file))
 
-        mock_essentia['loader_instance'].assert_called_once_with(
-            filename=str(audio_file),
-            samplerate=16000,
-            resampleQuality=4
-        )
         assert isinstance(result, np.ndarray)
 
 
 class TestEmbedSong:
-    def test_embed_song(self, embedder, mock_essentia):
-        # Create fake audio data
+    def test_embed_song_calls_model(self, embedder, mock_essentia):
         audio = np.zeros(16000)
 
-        result = embedder._embed_song(audio)
+        embedder._embed_song(audio)
 
         mock_essentia['model_instance'].assert_called_once_with(audio)
-        # Result should be mean of frame embeddings (1280 dimensions)
-        assert result.shape == (1280,)
 
-    def test_embed_song_computes_mean(self, embedder, mock_essentia):
-        # Set up specific frame embeddings to verify mean computation
+    def test_embed_song_returns_mean_of_frames(self, embedder, mock_essentia):
         frame_embeddings = np.array([
             [1.0, 2.0, 3.0],
             [4.0, 5.0, 6.0],
         ])
         mock_essentia['model_instance'].return_value = frame_embeddings
 
+        result = embedder._embed_song(np.zeros(16000))
+
+        np.testing.assert_array_equal(result, np.array([2.5, 3.5, 4.5]))
+
+    def test_embed_song_output_shape(self, embedder, mock_essentia):
         audio = np.zeros(16000)
+
         result = embedder._embed_song(audio)
 
-        expected = np.array([2.5, 3.5, 4.5])
-        np.testing.assert_array_equal(result, expected)
+        assert result.shape == (1280,)
 
 
 class TestFlush:
-    def test_flush_puts_items_in_output_queue(self, embedder, output_queue, sample_metadata, tmp_path):
+    def test_flush_puts_all_items_in_output_queue(self, embedder, output_queue, sample_metadata, tmp_path):
         items = [
             EmbeddingWithMetadata(
-                file_path=tmp_path / "track1.mp3",
+                file_path=tmp_path / f"track{i}.mp3",
                 embedding=np.random.rand(1280),
                 metadata=sample_metadata
-            ),
-            EmbeddingWithMetadata(
-                file_path=tmp_path / "track2.mp3",
-                embedding=np.random.rand(1280),
-                metadata=sample_metadata
-            ),
+            )
+            for i in range(3)
         ]
 
         embedder._flush(items)
 
-        assert output_queue.qsize() == 2
+        assert output_queue.qsize() == 3
+
+    def test_flush_preserves_item_order(self, embedder, output_queue, sample_metadata, tmp_path):
+        embeddings = [np.array([float(i)] * 1280) for i in range(3)]
+        items = [
+            EmbeddingWithMetadata(
+                file_path=tmp_path / f"track{i}.mp3",
+                embedding=embeddings[i],
+                metadata=sample_metadata
+            )
+            for i in range(3)
+        ]
+
+        embedder._flush(items)
+
+        for i in range(3):
+            result = output_queue.get()
+            np.testing.assert_array_equal(result.embedding, embeddings[i])
 
 
 class TestRun:
-    def test_run_processes_queue_items(self, mock_essentia, input_queue, output_queue, sample_audio_with_metadata):
-        from song_embedder import SongEmbedder
+    def test_run_processes_single_item(self, mock_essentia, input_queue, output_queue, sample_audio_with_metadata):
         embedder = SongEmbedder(input_queue, output_queue, batch_size=16)
-
         input_queue.put(sample_audio_with_metadata)
-        input_queue.put(None)  # Termination signal
-
-        embedder.run()
-
-        # Should have 1 embedding + 1 None
-        items = []
-        while not output_queue.empty():
-            items.append(output_queue.get())
-
-        assert len(items) == 2
-        assert isinstance(items[0], EmbeddingWithMetadata)
-        assert items[0].metadata.album_id == 1
-        assert items[1] is None
-
-    def test_run_respects_batch_size(self, mock_essentia, input_queue, output_queue, sample_metadata, tmp_path):
-        from song_embedder import SongEmbedder
-        embedder = SongEmbedder(input_queue, output_queue, batch_size=2)
-
-        # Add 3 items - should flush after 2, then flush remaining 1
-        for i in range(3):
-            audio_file = tmp_path / f"track{i}.mp3"
-            audio_file.touch()
-            input_queue.put(AudioWithMetadata(file_path=audio_file, metadata=sample_metadata))
         input_queue.put(None)
 
         embedder.run()
@@ -181,15 +168,21 @@ class TestRun:
         while not output_queue.empty():
             items.append(output_queue.get())
 
-        # 3 embeddings + 1 None
-        assert len(items) == 4
+        assert len(items) == 2  # 1 embedding + None
+        assert isinstance(items[0], EmbeddingWithMetadata)
+        assert items[0].metadata.album_id == 1
         assert items[-1] is None
 
-    def test_run_flushes_remaining_on_termination(self, mock_essentia, input_queue, output_queue, sample_metadata, tmp_path):
-        from song_embedder import SongEmbedder
-        embedder = SongEmbedder(input_queue, output_queue, batch_size=10)  # Large batch size
+    def test_run_sends_termination_signal(self, mock_essentia, input_queue, output_queue):
+        embedder = SongEmbedder(input_queue, output_queue, batch_size=16)
+        input_queue.put(None)
 
-        # Add only 2 items (less than batch size)
+        embedder.run()
+
+        assert output_queue.get() is None
+
+    def test_run_flushes_remaining_on_termination(self, mock_essentia, input_queue, output_queue, sample_metadata, tmp_path):
+        embedder = SongEmbedder(input_queue, output_queue, batch_size=100)
         for i in range(2):
             audio_file = tmp_path / f"track{i}.mp3"
             audio_file.touch()
@@ -202,23 +195,26 @@ class TestRun:
         while not output_queue.empty():
             items.append(output_queue.get())
 
-        # Should still get all items even though batch wasn't full
-        assert len(items) == 3  # 2 embeddings + 1 None
+        assert len(items) == 3  # 2 embeddings + None
 
-    def test_run_sends_termination_signal(self, mock_essentia, input_queue, output_queue):
-        from song_embedder import SongEmbedder
-        embedder = SongEmbedder(input_queue, output_queue, batch_size=16)
-
-        input_queue.put(None)  # Immediate termination
+    def test_run_respects_batch_size(self, mock_essentia, input_queue, output_queue, sample_metadata, tmp_path):
+        embedder = SongEmbedder(input_queue, output_queue, batch_size=2)
+        for i in range(3):
+            audio_file = tmp_path / f"track{i}.mp3"
+            audio_file.touch()
+            input_queue.put(AudioWithMetadata(file_path=audio_file, metadata=sample_metadata))
+        input_queue.put(None)
 
         embedder.run()
 
-        assert output_queue.get() is None
+        items = []
+        while not output_queue.empty():
+            items.append(output_queue.get())
+
+        assert len(items) == 4  # 3 embeddings + None
 
     def test_run_preserves_metadata(self, mock_essentia, input_queue, output_queue, tmp_path):
-        from song_embedder import SongEmbedder
         embedder = SongEmbedder(input_queue, output_queue, batch_size=16)
-
         metadata = AlbumMetadata(
             album_id=42,
             title="Specific Album",
@@ -227,7 +223,6 @@ class TestRun:
         )
         audio_file = tmp_path / "track.mp3"
         audio_file.touch()
-
         input_queue.put(AudioWithMetadata(file_path=audio_file, metadata=metadata))
         input_queue.put(None)
 

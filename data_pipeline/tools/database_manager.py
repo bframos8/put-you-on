@@ -90,8 +90,10 @@ class DatabaseManager:
         try:
             self.cur.execute(query)
             results = self.cur.fetchall()
+            self.conn.commit()
             return results
         except psycopg.Error as e:
+            self.conn.rollback()
             print(f"An error occurred: {e}")
             return []
 

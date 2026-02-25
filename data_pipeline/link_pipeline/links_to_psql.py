@@ -48,11 +48,14 @@ def load_progress():
     """Load progress from JSON file, or return defaults if not found."""
     if PROGRESS_FILE.exists():
         with open(PROGRESS_FILE, "r") as f:
-            return json.load(f)
+            genre_progress = json.load(f)
+            if not any(genre_progress.values()):
+                genre_progress = DEFAULT_GENRE_URLS.copy()
+            return genre_progress
     return DEFAULT_GENRE_URLS.copy()
 
 
-def save_progress(genre_urls):
+def save_progress(genre_urls:dict):
     """Save current progress to JSON file."""
     with open(PROGRESS_FILE, "w") as f:
         json.dump(genre_urls, f, indent=2)

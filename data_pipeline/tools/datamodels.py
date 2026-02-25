@@ -9,7 +9,6 @@ class AlbumMetadata:
     title: str
     artist_name: str
     url: str
-    # Add any other columns you need here
 
 @dataclass
 class AudioWithMetadata:

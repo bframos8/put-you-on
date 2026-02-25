@@ -37,7 +37,7 @@ export default function Dashboard() {
       <div className="flex min-h-screen items-center justify-center bg-green-950">
         <p className="text-white">Loading...</p>
       </div>
-    );1 
+    );
   }
 
   return (
