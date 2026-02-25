@@ -75,6 +75,7 @@ class SongDownloader(PipelineStage):
         subprocess.run([
             "bandcamp-dl",
             "-n",
+            "--no-confirm",
             "--base-dir",
             str(album_dir),
             url,
