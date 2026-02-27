@@ -1,20 +1,9 @@
 import json
-import os
 from pathlib import Path
-from dotenv import load_dotenv
 
-from data_pipeline.tools.bandcamp_crawler import BandcampCrawler
-from data_pipeline.tools.database_manager import DatabaseManager
-
-# Load environment variables from .env-postgres in project root
-env_path = Path(__file__).resolve().parents[2] / ".env-postgres"
-load_dotenv(dotenv_path=env_path)
-
-DB_NAME = os.getenv("POSTGRES_DB")
-USER = os.getenv("POSTGRES_USER")
-PASSWORD = os.getenv("POSTGRES_PASSWORD")
-HOST = os.getenv("POSTGRES_HOST", "localhost")
-PORT = os.getenv("POSTGRES_PORT", "5432")
+from data_pipeline.link_pipeline.crawler import BandcampCrawler
+from data_pipeline.db.manager import DatabaseManager
+from data_pipeline.config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
 DEFAULT_GENRE_URLS = {
     "https://bandcamp.com/discover/reggae/digital?s=new": True,
@@ -63,10 +52,10 @@ def save_progress(genre_urls:dict):
 if __name__ == "__main__":
     db_manager = DatabaseManager(
         db_name=DB_NAME,
-        user=USER,
-        password=PASSWORD,
-        host=HOST,
-        port=PORT
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
     )
     db_manager.connect()
 
@@ -90,7 +79,7 @@ if __name__ == "__main__":
         for item in payload:
             album_external_id = item.get("item_id")
             if album_external_id in album_cache:
-                print(f'ALBUM ID {external_id} found in cache, skipping.')
+                print(f'ALBUM ID {album_external_id} found in cache, skipping.')
                 continue  # Skip duplicate album
 
             external_id = item.get("band_id")
@@ -143,7 +132,7 @@ if __name__ == "__main__":
         # Mark genre as processed and save progress
         genre_urls[url] = False
         save_progress(genre_urls)
-        
+
 
     print(f"\n{'='*50}")
     print(f"All genres complete. Total unique artists: {len(artist_cache)}, Total unique albums: {len(album_cache)}")

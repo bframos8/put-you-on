@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch, call
 import json
 
-from data_pipeline.tools.bandcamp_crawler import BandcampCrawler
+from data_pipeline.link_pipeline.crawler import BandcampCrawler
 
 
 @pytest.fixture

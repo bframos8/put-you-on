@@ -1,32 +1,22 @@
 import os
-from pathlib import Path
-from dotenv import load_dotenv
 import re
-
-from data_pipeline.tools.database_manager import DatabaseManager
-from data_pipeline.tools.datamodels import EmbeddingWithMetadata
-from data_pipeline.song_pipeline.pipeline_stage import PipelineStage
+from pathlib import Path
 from queue import Queue
 
-# Load environment variables from .env-postgres in project root
-env_path = Path(__file__).resolve().parents[2] / ".env-postgres"
-load_dotenv(dotenv_path=env_path)
-
-DB_NAME = os.getenv("POSTGRES_DB")
-USER = os.getenv("POSTGRES_USER")
-PASSWORD = os.getenv("POSTGRES_PASSWORD")
-HOST = os.getenv("POSTGRES_HOST", "localhost")
-PORT = os.getenv("POSTGRES_PORT", "5432")
+from data_pipeline.db.manager import DatabaseManager
+from data_pipeline.models.datamodels import EmbeddingWithMetadata
+from data_pipeline.song_pipeline.stage import PipelineStage
+from data_pipeline.config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
 class SongDBWriter(PipelineStage):
     def __init__(self, embed_queue: Queue, batch_size: int):
         super().__init__(name="SongDBWriter")
         self.db_manager = DatabaseManager(
             db_name=DB_NAME,
-            user=USER,
-            password=PASSWORD,
-            host=HOST,
-            port=PORT
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
         )
         self.db_manager.connect()
         self.embed_queue = embed_queue

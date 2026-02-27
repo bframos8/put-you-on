@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import numpy as np
 
-from data_pipeline.tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata, Song
+from data_pipeline.models.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata, Song
 
 
 class TestAlbumMetadata:

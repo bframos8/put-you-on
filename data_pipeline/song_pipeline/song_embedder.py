@@ -1,13 +1,13 @@
-import os
+from pathlib import Path
 import numpy as np
 import essentia
 from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs
 
 essentia.log.warningActive = False
-from data_pipeline.tools.datamodels import AudioWithMetadata, EmbeddingWithMetadata
-from data_pipeline.song_pipeline.pipeline_stage import PipelineStage
+from data_pipeline.models.datamodels import AudioWithMetadata, EmbeddingWithMetadata
+from data_pipeline.song_pipeline.stage import PipelineStage
 
-GRAPH_FILE_PATH = os.path.join('data_pipeline', 'tools', 'discogs-effnet-bs64-1.pb')
+GRAPH_FILE_PATH = str(Path(__file__).resolve().parents[1] / "models" / "discogs-effnet-bs64-1.pb")
 
 class SongEmbedder(PipelineStage):
     def __init__(self, input_queue, output_queue, batch_size: int):

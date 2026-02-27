@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
 
 # Import only the pure functions (not the __main__ block)
-from data_pipeline.link_pipeline.links_to_psql import (
+from data_pipeline.link_pipeline.runner import (
     load_progress,
     save_progress,
     DEFAULT_GENRE_URLS,
@@ -16,7 +16,7 @@ class TestLoadProgress:
     def test_returns_defaults_when_no_file(self, tmp_path):
         missing_file = tmp_path / "genre_progress.json"
 
-        with patch('data_pipeline.link_pipeline.links_to_psql.PROGRESS_FILE', missing_file):
+        with patch('data_pipeline.link_pipeline.runner.PROGRESS_FILE', missing_file):
             result = load_progress()
 
         assert result == DEFAULT_GENRE_URLS
@@ -29,7 +29,7 @@ class TestLoadProgress:
         saved[first_url] = True
         progress_file.write_text(json.dumps(saved))
 
-        with patch('data_pipeline.link_pipeline.links_to_psql.PROGRESS_FILE', progress_file):
+        with patch('data_pipeline.link_pipeline.runner.PROGRESS_FILE', progress_file):
             result = load_progress()
 
         assert result == saved
@@ -40,7 +40,7 @@ class TestLoadProgress:
         all_done = {url: False for url in DEFAULT_GENRE_URLS}
         progress_file.write_text(json.dumps(all_done))
 
-        with patch('data_pipeline.link_pipeline.links_to_psql.PROGRESS_FILE', progress_file):
+        with patch('data_pipeline.link_pipeline.runner.PROGRESS_FILE', progress_file):
             result = load_progress()
 
         assert all(result.values())
@@ -51,7 +51,7 @@ class TestLoadProgress:
         partial = {url: (i % 2 == 0) for i, url in enumerate(urls)}  # Alternating True/False
         progress_file.write_text(json.dumps(partial))
 
-        with patch('data_pipeline.link_pipeline.links_to_psql.PROGRESS_FILE', progress_file):
+        with patch('data_pipeline.link_pipeline.runner.PROGRESS_FILE', progress_file):
             result = load_progress()
 
         assert result == partial
@@ -62,7 +62,7 @@ class TestSaveProgress:
         progress_file = tmp_path / "genre_progress.json"
         genre_urls = {"https://bandcamp.com/discover/rock/digital?s=new": False}
 
-        with patch('data_pipeline.link_pipeline.links_to_psql.PROGRESS_FILE', progress_file):
+        with patch('data_pipeline.link_pipeline.runner.PROGRESS_FILE', progress_file):
             save_progress(genre_urls)
 
         assert progress_file.exists()
@@ -74,7 +74,7 @@ class TestSaveProgress:
         original = {url: True for url in DEFAULT_GENRE_URLS}
         original[list(DEFAULT_GENRE_URLS.keys())[0]] = False
 
-        with patch('data_pipeline.link_pipeline.links_to_psql.PROGRESS_FILE', progress_file):
+        with patch('data_pipeline.link_pipeline.runner.PROGRESS_FILE', progress_file):
             save_progress(original)
             loaded = load_progress()
 
@@ -85,7 +85,7 @@ class TestSaveProgress:
         progress_file.write_text(json.dumps({"old": "data"}))
 
         new_data = {"https://bandcamp.com/discover/rock/digital?s=new": True}
-        with patch('data_pipeline.link_pipeline.links_to_psql.PROGRESS_FILE', progress_file):
+        with patch('data_pipeline.link_pipeline.runner.PROGRESS_FILE', progress_file):
             save_progress(new_data)
 
         saved = json.loads(progress_file.read_text())

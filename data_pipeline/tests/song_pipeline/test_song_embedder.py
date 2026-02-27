@@ -19,7 +19,7 @@ mock_essentia_standard.TensorflowPredictEffnetDiscogs.return_value = mock_model_
 sys.modules['essentia'] = MagicMock()
 sys.modules['essentia.standard'] = mock_essentia_standard
 
-from data_pipeline.tools.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
+from data_pipeline.models.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
 from data_pipeline.song_pipeline.song_embedder import SongEmbedder
 
 

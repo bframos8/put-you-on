@@ -4,7 +4,7 @@ from pathlib import Path
 from queue import Queue
 
 from data_pipeline.song_pipeline.song_downloader import SongDownloader, DOWNLOADS_DIR
-from data_pipeline.tools.datamodels import AlbumMetadata, AudioWithMetadata
+from data_pipeline.models.datamodels import AlbumMetadata, AudioWithMetadata
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch, call
 import psycopg
 
-from data_pipeline.tools.database_initializer import DatabaseInitializer
+from data_pipeline.db.initializer import DatabaseInitializer
 
 
 @pytest.fixture

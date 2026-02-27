@@ -1,30 +1,17 @@
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-
-from data_pipeline.tools.database_manager import DatabaseManager
-from data_pipeline.tools.database_initializer import DatabaseInitializer
-
-# Load environment variables from .env-postgres in project root
-env_path = Path(__file__).resolve().parents[2] / ".env-postgres"
-load_dotenv(dotenv_path=env_path)
-
-DB_NAME = os.getenv("POSTGRES_DB")
-USER = os.getenv("POSTGRES_USER")
-PASSWORD = os.getenv("POSTGRES_PASSWORD")
-HOST = os.getenv("POSTGRES_HOST", "localhost")
-PORT = os.getenv("POSTGRES_PORT", "5432")
+from data_pipeline.db.manager import DatabaseManager
+from data_pipeline.db.initializer import DatabaseInitializer
+from data_pipeline.config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
 def init_pyo_db():
     db_manager = DatabaseManager(
         db_name=DB_NAME,
-        user=USER,
-        password=PASSWORD,
-        host=HOST,
-        port=PORT
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
     )
     db_manager.connect()
-    
+
     db_initializer = DatabaseInitializer(db_manager)
 
     # Enable pgvector extension for embeddings
@@ -94,6 +81,6 @@ def init_pyo_db():
     print("Table 'songs' created successfully.")
 
     db_manager.close()
-    
+
 if __name__ == "__main__":
     init_pyo_db()

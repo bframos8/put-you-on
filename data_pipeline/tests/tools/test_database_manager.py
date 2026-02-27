@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 import psycopg
 
-from data_pipeline.tools.database_manager import DatabaseManager
+from data_pipeline.db.manager import DatabaseManager
 
 
 @pytest.fixture
@@ -30,21 +30,21 @@ class TestConnect:
     def test_connect_success(self, db_manager, mock_connection):
         mock_conn, mock_cur = mock_connection
 
-        with patch('data_pipeline.tools.database_manager.psycopg.connect', return_value=mock_conn):
+        with patch('data_pipeline.db.manager.psycopg.connect', return_value=mock_conn):
             db_manager.connect()
 
         assert db_manager.conn == mock_conn
         assert db_manager.cur == mock_cur
 
     def test_connect_failure_bad_credentials(self, db_manager):
-        with patch('data_pipeline.tools.database_manager.psycopg.connect') as mock_connect:
+        with patch('data_pipeline.db.manager.psycopg.connect') as mock_connect:
             mock_connect.side_effect = psycopg.OperationalError("connection failed")
 
             with pytest.raises(RuntimeError, match="Please check your connection details"):
                 db_manager.connect()
 
     def test_connect_failure_generic_error(self, db_manager):
-        with patch('data_pipeline.tools.database_manager.psycopg.connect') as mock_connect:
+        with patch('data_pipeline.db.manager.psycopg.connect') as mock_connect:
             mock_connect.side_effect = psycopg.Error("generic error")
 
             with pytest.raises(RuntimeError, match="An error occurred"):

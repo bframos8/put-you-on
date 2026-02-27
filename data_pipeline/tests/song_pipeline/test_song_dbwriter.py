@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 from queue import Queue
 import numpy as np
 
-from data_pipeline.tools.datamodels import AlbumMetadata, EmbeddingWithMetadata
+from data_pipeline.models.datamodels import AlbumMetadata, EmbeddingWithMetadata
 
 
 @pytest.fixture(autouse=True)
