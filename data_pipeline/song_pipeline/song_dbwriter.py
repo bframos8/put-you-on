@@ -69,8 +69,8 @@ class SongDBWriter(PipelineStage):
                 item.embedding.tolist()  # Convert numpy array to list for PostgreSQL
             ))
 
-        # Batch insert
-        self.db_manager.insert_rows(
+        # Batch insert, skipping any songs already in the db for this album
+        self.db_manager.insert_rows_ignore_conflicts(
             "songs",
             ["album_id", "title", "artist_name", "album_title", "embedding"],
             rows

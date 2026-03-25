@@ -1,7 +1,13 @@
 from pathlib import Path
 import re
 import os
-        
+import subprocess
+from dotenv import load_dotenv
+
+env_path = Path(__file__).resolve().parents[1] / ".env-backend"
+load_dotenv(dotenv_path = env_path)
+output_dir = os.path.join(os.path.dirname(__file__))
+
 def _test_title():
     album_dir = DOWNLOADS_DIR = Path(__file__).parent / "downloads"
     audio_extensions = {'.mp3', '.flac', '.wav', '.m4a', '.ogg'}
@@ -35,5 +41,16 @@ def _test_removing_file():
         if not path.is_file():
             print(f'{str(path)} deleted')
     
+    
+def _test_spotdl():
+    os.makedirs(output_dir, exist_ok = True)
+    subprocess.run(
+        ["spotdl", "--no-cache", "--format", "mp3", "--bitrate", "320k", 
+         "--client-id", os.getenv("SPOTIFY_CLIENT_ID"),
+         "--client-secret", os.getenv("SPOTIFY_CLIENT_SECRET"),
+         "--output", output_dir,
+         "https://open.spotify.com/track/5cm8sMvF8qskWFUrDdDIhr"],
+        check = True
+    )
 if __name__ == "__main__":
-    _test_removing_file()
+    _test_spotdl()

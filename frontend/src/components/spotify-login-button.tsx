@@ -4,10 +4,7 @@ import { Button } from "@/components/ui/button";
 
 export function SpotifyLoginButton() {
   const handleLogin = () => {
-    const clientId = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
-    const redirectUri = encodeURIComponent("https://127.0.0.1:3000/callback");
-    const scopes = encodeURIComponent("user-read-email user-top-read");
-    window.location.href = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&scope=${scopes}`;
+    window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/spotify/login`;
   };
 
   return (

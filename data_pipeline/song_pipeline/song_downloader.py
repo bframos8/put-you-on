@@ -51,7 +51,7 @@ class SongDownloader(PipelineStage):
     def _get_albums_to_download(self):
         query = """
             UPDATE albums SET work_status = 'in_progress'
-            WHERE work_status IN ('pending', 'in_progress')
+            WHERE work_status = 'pending'
             RETURNING id, title, artist_name, url;
         """
         results = self.db_manager.execute_query(query)

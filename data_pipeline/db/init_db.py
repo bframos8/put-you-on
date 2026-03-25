@@ -49,7 +49,7 @@ def init_pyo_db():
             source TEXT,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP,
-            url TEXT DEFAULT 'Void',
+            url TEXT UNIQUE DEFAULT 'Void',
             duration INTEGER,
             release_date TEXT,
             artist_name TEXT,
@@ -73,12 +73,60 @@ def init_pyo_db():
             album_title TEXT,
             album_id INTEGER REFERENCES albums(id),
             embedding vector(1280),
+            is_candidate BOOLEAN NOT NULL DEFAULT TRUE,
+            spotify_track_id TEXT UNIQUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP
+            updated_at TIMESTAMP,
+            UNIQUE (album_id, title)
         );
     """)
     db_manager.conn.commit()
     print("Table 'songs' created successfully.")
+
+    db_manager.cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            spotify_id TEXT UNIQUE NOT NULL,
+            display_name TEXT,
+            email TEXT UNIQUE,
+            spotify_access_token TEXT,
+            spotify_refresh_token TEXT,
+            token_expires_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        );
+    """)
+    db_manager.conn.commit()
+    print("Table 'users' created successfully.")
+
+    db_manager.cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_top_songs (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            song_id INTEGER REFERENCES songs(id),
+            spotify_track_id TEXT NOT NULL,
+            spotify_url TEXT,
+            image_url TEXT,
+            artist_name TEXT,
+            track_title TEXT,
+            album_title TEXT,
+            snapshot_at TIMESTAMP DEFAULT NOW(),
+            used_as_query BOOLEAN NOT NULL DEFAULT FALSE
+        );
+    """)
+    db_manager.conn.commit()
+    print("Table 'user_top_songs' created successfully.")
+
+    db_manager.cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_recommendations (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            song_id INTEGER NOT NULL REFERENCES songs(id),
+            recommended_at TIMESTAMP DEFAULT NOW()
+        );
+    """)
+    db_manager.conn.commit()
+    print("Table 'user_recommendations' created successfully.")
 
     db_manager.close()
 
