@@ -6,7 +6,7 @@ import { SongRecCarousel } from "@/components/song-rec-carousel";
 
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<{ display_name: string; email: string } | null>(null);
+  const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
@@ -19,11 +19,11 @@ export default function Dashboard() {
         }
         return res.json();
       })
-      .then(setUser)
+      .then(() => setAuthed(true))
       .catch(() => {});
   }, [router]);
 
-  if (!user) {
+  if (!authed) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-green-950">
         <p className="text-white">Loading...</p>
@@ -34,11 +34,13 @@ export default function Dashboard() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-green-950 font-sans">
       <main className="flex w-full max-w-3xl flex-col items-center justify-center">
-        <h1 className="text-2xl font-bold text-white">
-          Welcome, {user.display_name}
-        </h1>
-        <SongRecCarousel/>
-        <p className="mt-2 text-emerald-400">{user.email}</p>
+        <SongRecCarousel />
+        <button
+          onClick={() => { window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`; }}
+          className="mt-6 text-sm text-emerald-400 underline"
+        >
+          Logout
+        </button>
       </main>
     </div>
   );

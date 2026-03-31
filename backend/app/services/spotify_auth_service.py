@@ -52,6 +52,41 @@ class SpotifyAuthService:
             response.raise_for_status()
             return response.json()
 
+    async def get_track_genres(self, tracks: list[dict], access_token: str) -> dict[str, str | None]:
+        """Return a mapping of Spotify track_id → canonical genre for each track.
+
+        Batch-fetches artist objects (up to 50 per request) to get Spotify's
+        genre tags, then normalizes them to Bandcamp's canonical taxonomy.
+        """
+        from .genre_normalizer import normalize_genre
+
+        # Build artist_id → [track_ids] map (one artist may appear on many tracks)
+        artist_to_tracks: dict[str, list[str]] = {}
+        for track in tracks:
+            artist_id = track["artists"][0]["id"]
+            artist_to_tracks.setdefault(artist_id, []).append(track["id"])
+
+        artist_ids = list(artist_to_tracks.keys())
+        artist_genres: dict[str, str | None] = {}
+
+        async with httpx.AsyncClient() as client:
+            # Spotify allows up to 50 artist IDs per request
+            for i in range(0, len(artist_ids), 50):
+                batch = artist_ids[i : i + 50]
+                response = await client.get(
+                    "https://api.spotify.com/v1/artists",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"ids": ",".join(batch)},
+                )
+                response.raise_for_status()
+                for artist in response.json()["artists"]:
+                    artist_genres[artist["id"]] = normalize_genre(artist.get("genres") or [])
+
+        return {
+            track["id"]: artist_genres.get(track["artists"][0]["id"])
+            for track in tracks
+        }
+
     async def get_top_tracks(self, access_token: str, limit: int = 10) -> list[dict]:
         async with httpx.AsyncClient() as client:
             response = await client.get(

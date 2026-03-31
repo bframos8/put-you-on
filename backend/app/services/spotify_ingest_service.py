@@ -10,7 +10,7 @@ import numpy as np
 from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs
 from sqlalchemy.orm import Session
 
-from ..db.models import Song, User, UserRecommendation, UserTopSong
+from ..db.models import Album, Song, User, UserRecommendation, UserTopSong
 
 essentia.log.warningActive = False
 
@@ -75,7 +75,13 @@ class SpotifyIngestService:
         if audio_path.exists():
             os.remove(audio_path)
 
-    def add_user_top_songs(self, tracks: list[dict], user: User, db: Session) -> None:
+    def add_user_top_songs(
+        self,
+        tracks: list[dict],
+        user: User,
+        db: Session,
+        genre_map: dict[str, str | None] | None = None,
+    ) -> None:
         db.query(UserTopSong).filter(UserTopSong.user_id == user.id).delete()
         snapshot_at = datetime.now()
         for track in tracks:
@@ -90,6 +96,7 @@ class SpotifyIngestService:
                 artist_name=track["artists"][0]["name"],
                 track_title=track["name"],
                 album_title=track["album"]["name"],
+                genre=genre_map.get(spotify_track_id) if genre_map else None,
                 snapshot_at=snapshot_at,
             ))
         db.commit()
@@ -111,6 +118,7 @@ class SpotifyIngestService:
                     artist_name=top_song.artist_name,
                     album_title=top_song.album_title,
                     spotify_track_id=top_song.spotify_track_id,
+                    genre=top_song.genre,
                     embedding=embedding.tolist(),
                     is_candidate=False,
                 )
@@ -150,21 +158,33 @@ class SpotifyIngestService:
             .subquery()
         )
 
-        results = (
+        base_query = (
             db.query(Song)
             .filter(Song.is_candidate == True)
             .filter(Song.id != query_song.id)
             .filter(Song.id.not_in(already_recommended))
             .order_by(Song.embedding.cosine_distance(query_song.embedding))
-            .limit(limit)
-            .all()
         )
+
+        # Try genre-filtered first; fall back to all genres if not enough results
+        results = []
+        if query_song.genre:
+            results = (
+                base_query
+                .join(Song.album)
+                .filter(Album.genre == query_song.genre)
+                .limit(limit)
+                .all()
+            )
+
+        if len(results) < limit:
+            results = base_query.limit(limit).all()
 
         for song in results:
             db.add(UserRecommendation(user_id=user.id, song_id=song.id))
         db.commit()
 
-        return results
+        return query_song, results
 
 
 def get_ingest_service(request: Request) -> SpotifyIngestService:

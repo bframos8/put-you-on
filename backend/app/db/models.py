@@ -59,6 +59,7 @@ class Album(Base):
     artist_id = Column(Integer, ForeignKey("artists.id"))
     work_status = Column(Enum(WorkStatus, name="work_status_enum", create_type=False), default=WorkStatus.pending)
     image_url = Column(Text)
+    genre = Column(Text)
 
     artist = relationship("Artist", back_populates="albums")
     songs = relationship("Song", back_populates="album")
@@ -75,6 +76,7 @@ class Song(Base):
     embedding = Column(Vector(1280))
     is_candidate = Column(Boolean, default=True, nullable=False)
     spotify_track_id = Column(Text, unique=True)
+    genre = Column(Text)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime)
 
@@ -95,6 +97,7 @@ class UserTopSong(Base):
     artist_name = Column(Text)
     track_title = Column(Text)
     album_title = Column(Text)
+    genre = Column(Text)
     snapshot_at = Column(DateTime, default=datetime.now)
     used_as_query = Column(Boolean, default=False, nullable=False)
 

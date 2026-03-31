@@ -5,6 +5,7 @@ from ..db.database import get_db
 from ..db.models import User
 from ..core.session import decode_session
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    print(f"DEBUG get_current_user cookies: {dict(request.cookies)}", flush=True)
     token = request.cookies.get("session")
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")

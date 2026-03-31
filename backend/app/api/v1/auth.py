@@ -1,4 +1,5 @@
 import os
+import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -22,9 +23,8 @@ def get_frontend_url() -> str:
 @limiter.limit("20/minute")
 async def spotify_login(request: Request):
     auth_url, state = auth_service.get_auth_url()
-    response = RedirectResponse(url=auth_url)
-    response.set_cookie(key="oauth_state", value=state, httponly=True, max_age=300)
-    return response
+    request.app.state.oauth_states[state] = time.time()
+    return RedirectResponse(url=auth_url)
 
 
 @router.get("/spotify/callback")
@@ -35,9 +35,10 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
     if error:
         return RedirectResponse(url=f"{frontend_url}?error={error}")
 
-    stored_state = request.cookies.get("oauth_state")
-    if not state or state != stored_state:
+    oauth_states = request.app.state.oauth_states
+    if not state or state not in oauth_states:
         return RedirectResponse(url=f"{frontend_url}?error=state_mismatch")
+    del oauth_states[state]
 
     try:
         token_data = await auth_service.exchange_code(code)
@@ -55,7 +56,6 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
         samesite="none",
         max_age=60 * 60 * 24 * 30,
     )
-    response.delete_cookie("oauth_state")
     return response
 
 

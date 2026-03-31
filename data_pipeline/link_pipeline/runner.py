@@ -107,7 +107,7 @@ if __name__ == "__main__":
                     "title", "external_source_id", "source",
                     "url", "duration", "release_date",
                     "artist_name", "artist_id",
-                    "work_status", "image_url"
+                    "work_status", "image_url", "genre"
                 ],
                 data=[
                     item.get("title"),
@@ -119,7 +119,8 @@ if __name__ == "__main__":
                     item.get("band_name"),
                     db_artist_id,
                     "pending",
-                    f'https://f4.bcbits.com/img/a{item.get("primary_image").get("image_id")}_0.jpg'
+                    f'https://f4.bcbits.com/img/a{item.get("primary_image").get("image_id")}_0.jpg',
+                    genre
                 ],
                 conflict_column="external_source_id"
             )
