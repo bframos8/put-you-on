@@ -66,60 +66,79 @@ def run_pipeline(db_manager):
         crawler = BandcampCrawler(url)
         crawler.run()
         payload = crawler.get_discover_payloads()
-        albums_inserted = 0
-        for item in payload:
-            album_external_id = item.get("item_id")
-            if album_external_id in album_cache:
-                print(f'ALBUM ID {album_external_id} found in cache, skipping.')
-                continue  # Skip duplicate album
 
-            external_id = item.get("band_id")
-            if external_id in artist_cache:
-                db_artist_id = artist_cache[external_id]
-            else:
-                db_artist_id = db_manager.upsert_row_and_return_id(
-                    table_name="artists",
-                    column_names=["bandcamp_band_id", "band_name", "url", "band_location"],
-                    data=[
+        # Skip albums already seen this run
+        candidate_items = [item for item in payload if item.get("item_id") not in album_cache]
+        cache_skipped = len(payload) - len(candidate_items)
+
+        # Skip albums already in the DB (check only the IDs we're about to try)
+        candidate_ids = [item.get("item_id") for item in candidate_items]
+        existing_in_db = db_manager.fetch_existing_values("albums", "external_source_id", candidate_ids)
+        # Deduplicate within payload by item_id, then exclude DB-existing
+        seen_this_payload: set = set()
+        new_items = []
+        for item in candidate_items:
+            iid = item.get("item_id")
+            if iid not in existing_in_db and iid not in seen_this_payload:
+                seen_this_payload.add(iid)
+                new_items.append(item)
+        db_skipped = len(candidate_items) - len(new_items)
+
+        # Batch upsert any artists not yet in cache
+        unseen_band_ids = {item.get("band_id") for item in new_items if item.get("band_id") not in artist_cache}
+        if unseen_band_ids:
+            seen: set = set()
+            artist_rows = []
+            for item in new_items:
+                band_id = item.get("band_id")
+                if band_id in unseen_band_ids and band_id not in seen:
+                    seen.add(band_id)
+                    artist_rows.append((
                         item.get("band_id"),
                         item.get("band_name"),
                         item.get("band_url").partition("?")[0],
-                        item.get("band_location")
-                    ],
-                    conflict_column="bandcamp_band_id"
-                )
-                artist_cache[external_id] = db_artist_id
+                        item.get("band_location"),
+                    ))
+            db_manager.insert_rows_ignore_conflicts(
+                "artists",
+                ["bandcamp_band_id", "band_name", "url", "band_location"],
+                artist_rows,
+            )
+            artist_cache.update(db_manager.fetch_id_map("artists", "bandcamp_band_id", list(unseen_band_ids)))
 
-            album_url = item.get("item_url").partition("?")[0]
+        # Batch insert albums
+        album_rows = [
+            (
+                item.get("title"),
+                item.get("item_id"),
+                "bandcamp",
+                item.get("item_url").partition("?")[0],
+                item.get("item_duration"),
+                item.get("release_date"),
+                item.get("band_name"),
+                artist_cache.get(item.get("band_id")),
+                "pending",
+                f'https://f4.bcbits.com/img/a{item.get("primary_image").get("image_id")}_0.jpg',
+                genre,
+            )
+            for item in new_items
+        ]
 
-            was_inserted = db_manager.upsert_row(
-                table_name="albums",
-                column_names=[
+        if album_rows:
+            db_manager.insert_rows_ignore_conflicts(
+                "albums",
+                [
                     "title", "external_source_id", "source",
                     "url", "duration", "release_date",
                     "artist_name", "artist_id",
-                    "work_status", "image_url", "genre"
+                    "work_status", "image_url", "genre",
                 ],
-                data=[
-                    item.get("title"),
-                    album_external_id,
-                    "bandcamp",
-                    album_url,
-                    item.get("item_duration"),
-                    item.get("release_date"),
-                    item.get("band_name"),
-                    db_artist_id,
-                    "pending",
-                    f'https://f4.bcbits.com/img/a{item.get("primary_image").get("image_id")}_0.jpg',
-                    genre
-                ],
-                conflict_column="external_source_id"
+                album_rows,
             )
-            if was_inserted:
-                album_cache[album_external_id] = True
-                albums_inserted += 1
+            for item in new_items:
+                album_cache[item.get("item_id")] = True
 
-        print(f"Completed {genre}: {albums_inserted} albums inserted ({len(payload) - albums_inserted} duplicates skipped)")
+        print(f"Completed {genre}: {len(album_rows)} inserted, {db_skipped} already in DB, {cache_skipped} cache skips")
 
         # Mark genre as processed and save progress
         genre_urls[url] = False

@@ -157,13 +157,40 @@ class DatabaseManager:
             print(f"An error inserting rows occurred: {e}")
             raise
 
-    def insert_rows_ignore_conflicts(self, table_name: str, column_names: list[str], rows: list[tuple]) -> None:
+    def fetch_existing_values(self, table_name: str, column_name: str, values: list) -> set:
+        """Check which of the given values already exist in a column.
+
+        Args:
+            table_name: Name of the table to query
+            column_name: Column to check
+            values: The candidate values to look up
+
+        Returns:
+            Set of values from the input that already exist in the table
+        """
+        if not values:
+            return set()
+        query = sql.SQL(
+            'SELECT {col} FROM {table} WHERE {col} = ANY(%s);'
+        ).format(
+            table=sql.Identifier(table_name),
+            col=sql.Identifier(column_name)
+        )
+        try:
+            self.cur.execute(query, [values])
+            return {row[0] for row in self.cur.fetchall()}
+        except psycopg.Error as e:
+            print(f"An error fetching existing values occurred: {e}")
+            return set()
+
+    def insert_rows_ignore_conflicts(self, table_name: str, column_names: list[str], rows: list[tuple], chunk_size: int = 600) -> None:
         """Batch insert rows, silently skipping any that violate unique constraints.
 
         Args:
             table_name: Name of the table to insert into
             column_names: List of column names
             rows: List of tuples, each tuple containing values for one row
+            chunk_size: Number of rows per batch (default 600)
         """
         if not rows:
             raise ValueError("Rows list is empty. Cannot insert without data.")
@@ -180,10 +207,14 @@ class DatabaseManager:
             placeholders=sql.SQL(', ').join(sql.Placeholder() for _ in column_names)
         )
 
+        total_inserted = 0
         try:
-            self.cur.executemany(query, rows)
-            self.conn.commit()
-            print(f"Inserted {self.cur.rowcount} rows into {table_name} (duplicates skipped).")
+            for i in range(0, len(rows), chunk_size):
+                chunk = rows[i:i + chunk_size]
+                self.cur.executemany(query, chunk)
+                self.conn.commit()
+                total_inserted += self.cur.rowcount
+            print(f"Inserted {total_inserted} rows into {table_name} (duplicates skipped).")
         except psycopg.Error as e:
             self.conn.rollback()
             print(f"An error inserting rows occurred: {e}")
