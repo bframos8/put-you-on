@@ -49,16 +49,7 @@ def save_progress(genre_urls:dict):
     with open(PROGRESS_FILE, "w") as f:
         json.dump(genre_urls, f, indent=2)
 
-if __name__ == "__main__":
-    db_manager = DatabaseManager(
-        db_name=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    db_manager.connect()
-
+def run_pipeline(db_manager):
     artist_cache = {}  # Persist across all genres to avoid duplicate artists
     album_cache = {}   # Persist across all genres to avoid duplicate albums
 
@@ -134,7 +125,18 @@ if __name__ == "__main__":
         genre_urls[url] = False
         save_progress(genre_urls)
 
-
     print(f"\n{'='*50}")
     print(f"All genres complete. Total unique artists: {len(artist_cache)}, Total unique albums: {len(album_cache)}")
+
+
+if __name__ == "__main__":
+    db_manager = DatabaseManager(
+        db_name=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    db_manager.connect()
+    run_pipeline(db_manager)
     db_manager.close()

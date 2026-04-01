@@ -55,7 +55,8 @@ def init_pyo_db():
             artist_name TEXT,
             artist_id INTEGER REFERENCES artists(id),
             work_status work_status_enum DEFAULT 'pending',
-            image_url TEXT
+            image_url TEXT,
+            genre TEXT
         );
     """)
     db_manager.conn.commit()

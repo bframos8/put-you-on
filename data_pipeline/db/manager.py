@@ -19,7 +19,8 @@ class DatabaseManager:
                 user=self.user,
                 password=self.password,
                 host=self.host,
-                port=self.port
+                port=self.port,
+                sslmode="require"
             )
             self.cur = self.conn.cursor()
             print("Connected to the database successfully.")
@@ -187,6 +188,30 @@ class DatabaseManager:
             self.conn.rollback()
             print(f"An error inserting rows occurred: {e}")
             raise
+
+    def fetch_id_map(self, table_name: str, key_column: str, values: list) -> dict:
+        """Fetch a mapping of key_column value -> id for a list of values.
+
+        Args:
+            table_name: Name of the table to query
+            key_column: The column to match against
+            values: List of values to look up
+
+        Returns:
+            Dict mapping key_column value to row id
+        """
+        query = sql.SQL(
+            'SELECT {key}, id FROM {table} WHERE {key} = ANY(%s);'
+        ).format(
+            table=sql.Identifier(table_name),
+            key=sql.Identifier(key_column)
+        )
+        try:
+            self.cur.execute(query, [values])
+            return {row[0]: row[1] for row in self.cur.fetchall()}
+        except psycopg.Error as e:
+            print(f"An error fetching id map occurred: {e}")
+            return {}
 
     def upsert_row(self, table_name: str, column_names: list[str], data: list,
                    conflict_column: str) -> bool:
