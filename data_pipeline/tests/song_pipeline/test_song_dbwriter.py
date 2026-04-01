@@ -1,9 +1,15 @@
 import pytest
+import threading
 from unittest.mock import MagicMock, patch
 from queue import Queue
 import numpy as np
 
 from data_pipeline.models.datamodels import AlbumMetadata, EmbeddingWithMetadata
+
+
+@pytest.fixture
+def stop_event():
+    return threading.Event()
 
 
 @pytest.fixture(autouse=True)
@@ -27,9 +33,9 @@ def embed_queue():
 
 
 @pytest.fixture
-def db_writer(mock_db_manager, embed_queue):
+def db_writer(mock_db_manager, embed_queue, stop_event):
     from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
-    return SongDBWriter(embed_queue, batch_size=2)
+    return SongDBWriter(embed_queue, stop_event)
 
 
 @pytest.fixture
@@ -56,7 +62,6 @@ class TestExtractName:
         assert db_writer._extract_name("01 - My Song Title") == "My song title"
 
     def test_extracts_title_without_hyphen(self, db_writer):
-        # Format: "01  Song Name" (two spaces, no hyphen)
         assert db_writer._extract_name("03  Track Name") == "Track name"
 
     def test_replaces_hyphens_in_title(self, db_writer):
@@ -72,14 +77,14 @@ class TestFlush:
     def test_flush_calls_insert_rows_on_songs_table(self, db_writer, mock_db_manager, sample_embedding_with_metadata):
         db_writer._flush([sample_embedding_with_metadata])
 
-        mock_db_manager.insert_rows.assert_called_once()
-        call_args = mock_db_manager.insert_rows.call_args
+        mock_db_manager.insert_rows_ignore_conflicts.assert_called_once()
+        call_args = mock_db_manager.insert_rows_ignore_conflicts.call_args
         assert call_args[0][0] == "songs"
 
     def test_flush_uses_correct_column_names(self, db_writer, mock_db_manager, sample_embedding_with_metadata):
         db_writer._flush([sample_embedding_with_metadata])
 
-        call_args = mock_db_manager.insert_rows.call_args
+        call_args = mock_db_manager.insert_rows_ignore_conflicts.call_args
         assert call_args[0][1] == ["album_id", "title", "artist_name", "album_title", "embedding"]
 
     def test_flush_extracts_song_title_from_filename(self, db_writer, mock_db_manager, sample_metadata, tmp_path):
@@ -91,7 +96,7 @@ class TestFlush:
 
         db_writer._flush([embedding])
 
-        rows = mock_db_manager.insert_rows.call_args[0][2]
+        rows = mock_db_manager.insert_rows_ignore_conflicts.call_args[0][2]
         assert rows[0][1] == "My song title"
 
     def test_flush_converts_embedding_to_list(self, db_writer, mock_db_manager, sample_metadata, tmp_path):
@@ -104,7 +109,7 @@ class TestFlush:
 
         db_writer._flush([embedding])
 
-        rows = mock_db_manager.insert_rows.call_args[0][2]
+        rows = mock_db_manager.insert_rows_ignore_conflicts.call_args[0][2]
         assert rows[0][4] == [1.0, 2.0, 3.0]
         assert isinstance(rows[0][4], list)
 
@@ -123,10 +128,10 @@ class TestFlush:
 
         db_writer._flush([embedding])
 
-        row = mock_db_manager.insert_rows.call_args[0][2][0]
-        assert row[0] == 42              # album_id
-        assert row[2] == "Artist Name Here"   # artist_name
-        assert row[3] == "Album Title Here"   # album_title
+        row = mock_db_manager.insert_rows_ignore_conflicts.call_args[0][2][0]
+        assert row[0] == 42
+        assert row[2] == "Artist Name Here"
+        assert row[3] == "Album Title Here"
 
     def test_flush_handles_multiple_items(self, db_writer, mock_db_manager, sample_metadata, tmp_path):
         embeddings = [
@@ -140,7 +145,7 @@ class TestFlush:
 
         db_writer._flush(embeddings)
 
-        rows = mock_db_manager.insert_rows.call_args[0][2]
+        rows = mock_db_manager.insert_rows_ignore_conflicts.call_args[0][2]
         assert len(rows) == 3
 
     def test_flush_marks_albums_as_completed(self, db_writer, mock_db_manager, tmp_path):
@@ -163,64 +168,70 @@ class TestFlush:
 
 
 class TestRun:
-    def test_run_processes_queue_items(self, mock_db_manager, embed_queue, sample_embedding_with_metadata):
+    def test_run_processes_batch_from_queue(self, mock_db_manager, embed_queue, stop_event, sample_embedding_with_metadata):
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
-        db_writer = SongDBWriter(embed_queue, batch_size=10)
+        db_writer = SongDBWriter(embed_queue, stop_event)
 
-        embed_queue.put(sample_embedding_with_metadata)
+        embed_queue.put([sample_embedding_with_metadata])
         embed_queue.put(None)
 
         db_writer.run()
 
-        mock_db_manager.insert_rows.assert_called_once()
+        mock_db_manager.insert_rows_ignore_conflicts.assert_called_once()
 
-    def test_run_respects_batch_size(self, mock_db_manager, embed_queue, sample_metadata, tmp_path):
+    def test_run_calls_flush_once_per_batch(self, mock_db_manager, embed_queue, stop_event, sample_metadata, tmp_path):
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
-        db_writer = SongDBWriter(embed_queue, batch_size=2)
+        db_writer = SongDBWriter(embed_queue, stop_event)
 
-        for i in range(5):
-            embed_queue.put(EmbeddingWithMetadata(
+        batch1 = [
+            EmbeddingWithMetadata(
                 file_path=tmp_path / f"0{i+1} - track {i}.mp3",
                 embedding=np.random.rand(1280),
                 metadata=sample_metadata
-            ))
-        embed_queue.put(None)
-
-        db_writer.run()
-
-        # batch_size=2, 5 items: flush at 2, flush at 4, flush remaining 1
-        assert mock_db_manager.insert_rows.call_count == 3
-
-    def test_run_flushes_remaining_on_termination(self, mock_db_manager, embed_queue, sample_metadata, tmp_path):
-        from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
-        db_writer = SongDBWriter(embed_queue, batch_size=100)
-
-        for i in range(2):
-            embed_queue.put(EmbeddingWithMetadata(
-                file_path=tmp_path / f"0{i+1} - track {i}.mp3",
+            )
+            for i in range(3)
+        ]
+        batch2 = [
+            EmbeddingWithMetadata(
+                file_path=tmp_path / f"1{i+1} - track {i}.mp3",
                 embedding=np.random.rand(1280),
                 metadata=sample_metadata
-            ))
+            )
+            for i in range(2)
+        ]
+        embed_queue.put(batch1)
+        embed_queue.put(batch2)
         embed_queue.put(None)
 
         db_writer.run()
 
-        mock_db_manager.insert_rows.assert_called_once()
-        rows = mock_db_manager.insert_rows.call_args[0][2]
-        assert len(rows) == 2
+        assert mock_db_manager.insert_rows_ignore_conflicts.call_count == 2
 
-    def test_run_handles_empty_queue(self, mock_db_manager, embed_queue):
+    def test_run_handles_empty_queue(self, mock_db_manager, embed_queue, stop_event):
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
-        db_writer = SongDBWriter(embed_queue, batch_size=10)
+        db_writer = SongDBWriter(embed_queue, stop_event)
 
         embed_queue.put(None)
 
         db_writer.run()
 
-        mock_db_manager.insert_rows.assert_not_called()
+        mock_db_manager.insert_rows_ignore_conflicts.assert_not_called()
 
-    def test_run_connects_to_database_on_init(self, mock_db_manager, embed_queue):
+    def test_run_connects_to_database_on_init(self, mock_db_manager, embed_queue, stop_event):
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
-        SongDBWriter(embed_queue, batch_size=10)
+        SongDBWriter(embed_queue, stop_event)
 
         mock_db_manager.connect.assert_called_once()
+
+    def test_run_stores_error_on_failure(self, mock_db_manager, embed_queue, stop_event, sample_embedding_with_metadata):
+        from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
+        db_writer = SongDBWriter(embed_queue, stop_event)
+        mock_db_manager.insert_rows_ignore_conflicts.side_effect = RuntimeError("DB down")
+
+        embed_queue.put([sample_embedding_with_metadata])
+        embed_queue.put(None)
+
+        db_writer.run()
+
+        assert db_writer.error is not None
+        assert stop_event.is_set()

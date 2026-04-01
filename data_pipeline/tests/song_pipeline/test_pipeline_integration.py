@@ -1,4 +1,5 @@
 import pytest
+import threading
 from unittest.mock import MagicMock, patch
 from queue import Queue
 import numpy as np
@@ -19,6 +20,11 @@ sys.modules['essentia'] = MagicMock()
 sys.modules['essentia.standard'] = mock_essentia_standard
 
 from data_pipeline.models.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
+
+
+@pytest.fixture
+def stop_event():
+    return threading.Event()
 
 
 @pytest.fixture
@@ -53,18 +59,19 @@ def mock_all_external_deps(tmp_path):
 
 
 class TestFullPipelineFlow:
-    def test_data_flows_through_all_stages(self, mock_all_external_deps, tmp_path):
+    def test_data_flows_through_all_stages(self, mock_all_external_deps, stop_event, tmp_path):
         from data_pipeline.song_pipeline.song_downloader import SongDownloader
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
 
-        with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path / "downloads"):
+        with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path / "downloads"), \
+             patch('data_pipeline.song_pipeline.song_dbwriter.os.remove'):
             audio_queue = Queue(maxsize=32)
             embed_queue = Queue(maxsize=64)
 
-            downloader = SongDownloader(audio_queue)
-            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16)
-            db_writer = SongDBWriter(embed_queue, batch_size=100)
+            downloader = SongDownloader(audio_queue, stop_event)
+            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16, stop_event=stop_event)
+            db_writer = SongDBWriter(embed_queue, stop_event)
 
             downloader.start()
             embedder.start()
@@ -75,21 +82,21 @@ class TestFullPipelineFlow:
             db_writer.join(timeout=5)
 
             writer_db = mock_all_external_deps['writer_db']
-            writer_db.insert_rows.assert_called_once()
+            writer_db.insert_rows_ignore_conflicts.assert_called_once()
 
-            call_args = writer_db.insert_rows.call_args
+            call_args = writer_db.insert_rows_ignore_conflicts.call_args
             assert call_args[0][0] == "songs"
             assert call_args[0][1] == ["album_id", "title", "artist_name", "album_title", "embedding"]
 
             rows = call_args[0][2]
-            assert len(rows) == 2  # Two tracks
+            assert len(rows) == 2
             for row in rows:
-                assert row[0] == 1                 # album_id
-                assert row[2] == "Test Artist"     # artist_name
-                assert row[3] == "Test Album"      # album_title
-                assert len(row[4]) == 1280         # embedding dimension
+                assert row[0] == 1
+                assert row[2] == "Test Artist"
+                assert row[3] == "Test Album"
+                assert len(row[4]) == 1280
 
-    def test_termination_signals_propagate(self, mock_all_external_deps, tmp_path):
+    def test_termination_signals_propagate(self, mock_all_external_deps, stop_event, tmp_path):
         from data_pipeline.song_pipeline.song_downloader import SongDownloader
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
@@ -100,9 +107,9 @@ class TestFullPipelineFlow:
             audio_queue = Queue(maxsize=32)
             embed_queue = Queue(maxsize=64)
 
-            downloader = SongDownloader(audio_queue)
-            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16)
-            db_writer = SongDBWriter(embed_queue, batch_size=100)
+            downloader = SongDownloader(audio_queue, stop_event)
+            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16, stop_event=stop_event)
+            db_writer = SongDBWriter(embed_queue, stop_event)
 
             downloader.start()
             embedder.start()
@@ -116,7 +123,7 @@ class TestFullPipelineFlow:
             assert not embedder.is_alive()
             assert not db_writer.is_alive()
 
-    def test_pipeline_handles_empty_input(self, mock_all_external_deps, tmp_path):
+    def test_pipeline_handles_empty_input(self, mock_all_external_deps, stop_event, tmp_path):
         from data_pipeline.song_pipeline.song_downloader import SongDownloader
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
@@ -127,9 +134,9 @@ class TestFullPipelineFlow:
             audio_queue = Queue(maxsize=32)
             embed_queue = Queue(maxsize=64)
 
-            downloader = SongDownloader(audio_queue)
-            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16)
-            db_writer = SongDBWriter(embed_queue, batch_size=100)
+            downloader = SongDownloader(audio_queue, stop_event)
+            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16, stop_event=stop_event)
+            db_writer = SongDBWriter(embed_queue, stop_event)
 
             downloader.start()
             embedder.start()
@@ -139,11 +146,11 @@ class TestFullPipelineFlow:
             embedder.join(timeout=5)
             db_writer.join(timeout=5)
 
-            mock_all_external_deps['writer_db'].insert_rows.assert_not_called()
+            mock_all_external_deps['writer_db'].insert_rows_ignore_conflicts.assert_not_called()
 
 
 class TestPipelineDataIntegrity:
-    def test_metadata_preserved_through_pipeline(self, mock_all_external_deps, tmp_path):
+    def test_metadata_preserved_through_pipeline(self, mock_all_external_deps, stop_event, tmp_path):
         from data_pipeline.song_pipeline.song_downloader import SongDownloader
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
@@ -158,13 +165,14 @@ class TestPipelineDataIntegrity:
             (album_dir / "01 - Single Track.mp3").touch()
         mock_all_external_deps['subprocess'].side_effect = create_single_file
 
-        with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path / "downloads"):
+        with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path / "downloads"), \
+             patch('data_pipeline.song_pipeline.song_dbwriter.os.remove'):
             audio_queue = Queue(maxsize=32)
             embed_queue = Queue(maxsize=64)
 
-            downloader = SongDownloader(audio_queue)
-            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16)
-            db_writer = SongDBWriter(embed_queue, batch_size=100)
+            downloader = SongDownloader(audio_queue, stop_event)
+            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16, stop_event=stop_event)
+            db_writer = SongDBWriter(embed_queue, stop_event)
 
             downloader.start()
             embedder.start()
@@ -174,15 +182,15 @@ class TestPipelineDataIntegrity:
             embedder.join(timeout=5)
             db_writer.join(timeout=5)
 
-            rows = mock_all_external_deps['writer_db'].insert_rows.call_args[0][2]
+            rows = mock_all_external_deps['writer_db'].insert_rows_ignore_conflicts.call_args[0][2]
             assert len(rows) == 1
             row = rows[0]
-            assert row[0] == 999                   # album_id preserved
-            assert row[1] == "Single track"        # title extracted from filename
-            assert row[2] == "Unique Artist"       # artist_name preserved
-            assert row[3] == "Unique Album Name"   # album_title preserved
+            assert row[0] == 999
+            assert row[1] == "Single track"
+            assert row[2] == "Unique Artist"
+            assert row[3] == "Unique Album Name"
 
-    def test_pipeline_handles_multiple_albums(self, mock_all_external_deps, tmp_path):
+    def test_pipeline_handles_multiple_albums(self, mock_all_external_deps, stop_event, tmp_path):
         from data_pipeline.song_pipeline.song_downloader import SongDownloader
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
@@ -201,13 +209,14 @@ class TestPipelineDataIntegrity:
             (album_dir / f"01 - track from album {album_id}.mp3").touch()
         mock_all_external_deps['subprocess'].side_effect = create_files_for_album
 
-        with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path / "downloads"):
+        with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path / "downloads"), \
+             patch('data_pipeline.song_pipeline.song_dbwriter.os.remove'):
             audio_queue = Queue(maxsize=32)
             embed_queue = Queue(maxsize=64)
 
-            downloader = SongDownloader(audio_queue)
-            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16)
-            db_writer = SongDBWriter(embed_queue, batch_size=100)
+            downloader = SongDownloader(audio_queue, stop_event)
+            embedder = SongEmbedder(audio_queue, embed_queue, batch_size=16, stop_event=stop_event)
+            db_writer = SongDBWriter(embed_queue, stop_event)
 
             downloader.start()
             embedder.start()
@@ -217,6 +226,6 @@ class TestPipelineDataIntegrity:
             embedder.join(timeout=5)
             db_writer.join(timeout=5)
 
-            rows = mock_all_external_deps['writer_db'].insert_rows.call_args[0][2]
+            rows = mock_all_external_deps['writer_db'].insert_rows_ignore_conflicts.call_args[0][2]
             assert len(rows) == 2
             assert {row[0] for row in rows} == {1, 2}

@@ -1,7 +1,8 @@
 import os
 import re
 from pathlib import Path
-from queue import Queue
+from queue import Queue  # kept for type hint
+from threading import Event
 
 from data_pipeline.db.manager import DatabaseManager
 from data_pipeline.models.datamodels import EmbeddingWithMetadata
@@ -9,8 +10,8 @@ from data_pipeline.song_pipeline.stage import PipelineStage
 from data_pipeline.config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
 class SongDBWriter(PipelineStage):
-    def __init__(self, embed_queue: Queue, batch_size: int):
-        super().__init__(name="SongDBWriter")
+    def __init__(self, embed_queue: Queue, stop_event: Event):
+        super().__init__(name="SongDBWriter", stop_event=stop_event)
         self.db_manager = DatabaseManager(
             db_name=DB_NAME,
             user=DB_USER,
@@ -20,39 +21,29 @@ class SongDBWriter(PipelineStage):
         )
         self.db_manager.connect()
         self.embed_queue = embed_queue
-        self.batch_size = batch_size
 
     def run(self):
-        buffer = []
+        try:
+            while True:
+                batch = self.embed_queue.get()
 
-        while True:
-            item = self.embed_queue.get()
+                if batch is None:
+                    break
 
-            if item is None:
-                break
-
-            print(f'Adding {item.metadata.title} to DB buffer.')
-            buffer.append(item)
-
-            if len(buffer) >= self.batch_size:
                 try:
-                    self._flush(buffer)
-                    print(f'{self.batch_size} songs fully processed')
+                    self._flush(batch)
+                    print(f'{len(batch)} songs fully processed')
                 except Exception as e:
                     print(f'[SongDBWriter] Error flushing batch: {e}')
                     raise
-                buffer.clear()
 
-        if buffer:
-            try:
-                self._flush(buffer)
-            except Exception as e:
-                print(f'[SongDBWriter] Error flushing final batch: {e}')
-                raise
+        except Exception as e:
+            self.error = e
+            self.stop()
+            print(f'[SongDBWriter] Fatal error: {e}')
 
     def _flush(self, buffer: list[EmbeddingWithMetadata]) -> None:
         """Insert songs with metadata into database"""
-        # Prepare data for batch insert
         rows = []
         album_ids = set()
         paths_for_delete = set()
@@ -62,34 +53,31 @@ class SongDBWriter(PipelineStage):
             album_ids.add(item.metadata.album_id)
 
             rows.append((
-                item.metadata.album_id,  # Foreign key to albums table
+                item.metadata.album_id,
                 song_title,
                 item.metadata.artist_name,
-                item.metadata.title,  # album name
-                item.embedding.tolist()  # Convert numpy array to list for PostgreSQL
+                item.metadata.title,
+                item.embedding.tolist()
             ))
 
-        # Batch insert, skipping any songs already in the db for this album
         self.db_manager.insert_rows_ignore_conflicts(
             "songs",
             ["album_id", "title", "artist_name", "album_title", "embedding"],
             rows
         )
-        # Mark all processed albums as completed
         self.db_manager.update_rows_by_ids("albums", "work_status", "completed", list(album_ids))
         self._delete_processed_songs(paths_for_delete)
         buffer.clear()
-        
-        
+
+
     def _extract_name(self, song_title:str) -> str:
         parts = re.split(r"\d+\s-?\s", song_title)
         song_title = parts[1] if len(parts) > 1 else parts[0]
         song_title = song_title.replace("-", " ")
         song_title = song_title.capitalize()
         return song_title
-        
+
     def _delete_processed_songs(self, paths:set[Path]) -> None:
         for path in paths:
             print(f'Deleting {path.stem}')
             os.remove(path)
-        

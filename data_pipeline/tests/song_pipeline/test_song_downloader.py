@@ -1,10 +1,16 @@
 import pytest
+import threading
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 from queue import Queue
 
 from data_pipeline.song_pipeline.song_downloader import SongDownloader, DOWNLOADS_DIR
 from data_pipeline.models.datamodels import AlbumMetadata, AudioWithMetadata
+
+
+@pytest.fixture
+def stop_event():
+    return threading.Event()
 
 
 @pytest.fixture
@@ -22,8 +28,8 @@ def output_queue():
 
 
 @pytest.fixture
-def downloader(mock_db_manager, output_queue):
-    return SongDownloader(output_queue)
+def downloader(mock_db_manager, output_queue, stop_event):
+    return SongDownloader(output_queue, stop_event)
 
 
 class TestGetAlbumsToDownload:
@@ -63,6 +69,14 @@ class TestGetAlbumsToDownload:
         results = downloader._get_albums_to_download()
 
         assert results == []
+
+    def test_get_albums_to_download_uses_limit(self, downloader, mock_db_manager):
+        mock_db_manager.execute_query.return_value = []
+
+        downloader._get_albums_to_download()
+
+        query = mock_db_manager.execute_query.call_args[0][0].upper()
+        assert "LIMIT" in query
 
 
 class TestDownloadSongs:
@@ -136,7 +150,7 @@ class TestDownloadSongs:
 
 
 class TestRun:
-    def test_run_puts_items_in_queue(self, mock_db_manager, output_queue, tmp_path):
+    def test_run_puts_items_in_queue(self, mock_db_manager, output_queue, stop_event, tmp_path):
         mock_db_manager.execute_query.return_value = [
             (1, "Test Album", "Test Artist", "http://example.com/album"),
         ]
@@ -146,7 +160,7 @@ class TestRun:
 
         with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path):
             with patch('data_pipeline.song_pipeline.song_downloader.subprocess.run'):
-                downloader = SongDownloader(output_queue)
+                downloader = SongDownloader(output_queue, stop_event)
                 downloader.run()
 
         items = []
@@ -159,25 +173,25 @@ class TestRun:
         assert items[0].metadata.title == "Test Album"
         assert items[-1] is None
 
-    def test_run_sends_termination_signal(self, mock_db_manager, output_queue):
+    def test_run_sends_termination_signal(self, mock_db_manager, output_queue, stop_event):
         mock_db_manager.execute_query.return_value = []
 
         with patch('data_pipeline.song_pipeline.song_downloader.subprocess.run'):
-            downloader = SongDownloader(output_queue)
+            downloader = SongDownloader(output_queue, stop_event)
             downloader.run()
 
         assert output_queue.get() is None
 
-    def test_run_handles_empty_album_list(self, mock_db_manager, output_queue):
+    def test_run_handles_empty_album_list(self, mock_db_manager, output_queue, stop_event):
         mock_db_manager.execute_query.return_value = []
 
         with patch('data_pipeline.song_pipeline.song_downloader.subprocess.run') as mock_run:
-            downloader = SongDownloader(output_queue)
+            downloader = SongDownloader(output_queue, stop_event)
             downloader.run()
 
         mock_run.assert_not_called()
 
-    def test_run_processes_multiple_albums(self, mock_db_manager, output_queue, tmp_path):
+    def test_run_processes_multiple_albums(self, mock_db_manager, output_queue, stop_event, tmp_path):
         mock_db_manager.execute_query.return_value = [
             (1, "Album One", "Artist One", "http://example.com/album1"),
             (2, "Album Two", "Artist Two", "http://example.com/album2"),
@@ -189,7 +203,7 @@ class TestRun:
 
         with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path):
             with patch('data_pipeline.song_pipeline.song_downloader.subprocess.run'):
-                downloader = SongDownloader(output_queue)
+                downloader = SongDownloader(output_queue, stop_event)
                 downloader.run()
 
         items = []
@@ -198,3 +212,18 @@ class TestRun:
 
         assert len(items) == 3  # 2 audio items + None
         assert items[-1] is None
+
+    def test_run_stops_early_when_stop_event_set(self, mock_db_manager, output_queue, stop_event, tmp_path):
+        mock_db_manager.execute_query.return_value = [
+            (1, "Album One", "Artist One", "http://example.com/album1"),
+            (2, "Album Two", "Artist Two", "http://example.com/album2"),
+        ]
+        stop_event.set()
+
+        with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path):
+            with patch('data_pipeline.song_pipeline.song_downloader.subprocess.run') as mock_run:
+                downloader = SongDownloader(output_queue, stop_event)
+                downloader.run()
+
+        mock_run.assert_not_called()
+        assert output_queue.get() is None  # termination signal still sent
