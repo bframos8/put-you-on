@@ -100,7 +100,7 @@ class TestDownloadSongs:
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
-        assert call_args[0] == "bandcamp-dl"
+        assert str(call_args[0]).endswith("bandcamp-dl")
         assert "--base-dir" in call_args
         assert url in call_args
 
@@ -151,8 +151,9 @@ class TestDownloadSongs:
 
 class TestRun:
     def test_run_puts_items_in_queue(self, mock_db_manager, output_queue, stop_event, tmp_path):
-        mock_db_manager.execute_query.return_value = [
-            (1, "Test Album", "Test Artist", "http://example.com/album"),
+        mock_db_manager.execute_query.side_effect = [
+            [(1, "Test Album", "Test Artist", "http://example.com/album")],
+            [],
         ]
         album_dir = tmp_path / "1"
         album_dir.mkdir(parents=True)
@@ -192,9 +193,12 @@ class TestRun:
         mock_run.assert_not_called()
 
     def test_run_processes_multiple_albums(self, mock_db_manager, output_queue, stop_event, tmp_path):
-        mock_db_manager.execute_query.return_value = [
-            (1, "Album One", "Artist One", "http://example.com/album1"),
-            (2, "Album Two", "Artist Two", "http://example.com/album2"),
+        mock_db_manager.execute_query.side_effect = [
+            [
+                (1, "Album One", "Artist One", "http://example.com/album1"),
+                (2, "Album Two", "Artist Two", "http://example.com/album2"),
+            ],
+            [],
         ]
         for album_id in [1, 2]:
             album_dir = tmp_path / str(album_id)

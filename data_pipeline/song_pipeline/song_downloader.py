@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import time
 from pathlib import Path
 from queue import Full
@@ -27,37 +28,40 @@ class SongDownloader(PipelineStage):
 
     def run(self):
         try:
-            albums_to_download = self._get_albums_to_download()
-
-            for album_data in albums_to_download:
-                if self.stopped:
+            while not self.stopped:
+                albums_to_download = self._get_albums_to_download()
+                if not albums_to_download:
                     break
 
-                metadata = AlbumMetadata(
-                    album_id=album_data[0],
-                    title=album_data[1],
-                    artist_name=album_data[2],
-                    url=album_data[3]
-                )
-
-                # Wait for headroom before downloading to avoid saturating the queue
-                while not self.stopped and self.output_queue.full():
-                    time.sleep(0.2)
-
-                if self.stopped:
-                    break
-
-                audio_file_paths = self._download_songs(metadata.album_id, metadata.url)
-
-                for audio_file_path in audio_file_paths:
+                for album_data in albums_to_download:
                     if self.stopped:
                         break
-                    audio_with_metadata = AudioWithMetadata(
-                        file_path=audio_file_path,
-                        metadata=metadata
+
+                    metadata = AlbumMetadata(
+                        album_id=album_data[0],
+                        title=album_data[1],
+                        artist_name=album_data[2],
+                        url=album_data[3]
                     )
-                    print(f'Downloaded {audio_with_metadata.metadata.title} at {audio_with_metadata.file_path}')
-                    self._put(audio_with_metadata)
+
+                    # Wait for headroom before downloading to avoid saturating the queue
+                    while not self.stopped and self.output_queue.full():
+                        time.sleep(0.2)
+
+                    if self.stopped:
+                        break
+
+                    audio_file_paths = self._download_songs(metadata.album_id, metadata.url)
+
+                    for audio_file_path in audio_file_paths:
+                        if self.stopped:
+                            break
+                        audio_with_metadata = AudioWithMetadata(
+                            file_path=audio_file_path,
+                            metadata=metadata
+                        )
+                        print(f'Downloaded {audio_with_metadata.metadata.title} at {audio_with_metadata.file_path}')
+                        self._put(audio_with_metadata)
 
         except Exception as e:
             self.error = e
@@ -92,8 +96,9 @@ class SongDownloader(PipelineStage):
         album_dir = DOWNLOADS_DIR / str(album_id)
         album_dir.mkdir(parents=True, exist_ok=True)
 
+        bandcamp_dl = Path(sys.executable).parent / "bandcamp-dl"
         subprocess.run([
-            "bandcamp-dl",
+            str(bandcamp_dl),
             "-n",
             "--no-confirm",
             "--base-dir",
