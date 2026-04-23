@@ -2,10 +2,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ...db.database import get_db
-from ...db.models import User, Song
+from ...db.models import User, Song, UserTopSong
 from ...core.dependencies import get_current_user
 from ...core.limiter import limiter, session_key
-from ...schemas.song import SongResponse, RecsResponse
+from ...schemas.song import SongResponse, RecsResponse, TopTrackItem, TopTracksResponse
 from ...services.spotify_auth_service import SpotifyAuthService
 from ...services.spotify_ingest_service import SpotifyIngestService, get_ingest_service
 
@@ -71,3 +71,20 @@ async def get_recs(
         query_artist=query_song.artist_name,
         recommendations=[SongResponse.from_song(s) for s in results],
     )
+
+
+@router.get("/top_tracks/")
+@limiter.limit("30/minute", key_func=session_key)
+async def get_top_tracks(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TopTracksResponse:
+    rows = (
+        db.query(UserTopSong)
+        .filter(UserTopSong.user_id == user.id)
+        .order_by(UserTopSong.id.asc())
+        .limit(10)
+        .all()
+    )
+    return TopTracksResponse(tracks=[TopTrackItem.from_user_top_song(r) for r in rows])

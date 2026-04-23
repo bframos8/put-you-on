@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from ..db.models import Song
+from ..db.models import Song, UserTopSong
 
 
 class RecsResponse(BaseModel):
@@ -31,3 +31,29 @@ class SongResponse(BaseModel):
             external_source_id=song.album.external_source_id if song.album else None,
             album_url=song.album.url if song.album else None,
         )
+
+
+class TopTrackItem(BaseModel):
+    id: str
+    title: str | None
+    artist_name: str | None
+    album_title: str | None
+    image_url: str | None
+    album_url: str | None
+    duration_ms: int | None = None
+    popularity: int | None = None
+
+    @classmethod
+    def from_user_top_song(cls, row: UserTopSong) -> "TopTrackItem":
+        return cls(
+            id=row.spotify_track_id,
+            title=row.track_title,
+            artist_name=row.artist_name,
+            album_title=row.album_title,
+            image_url=row.image_url,
+            album_url=row.spotify_url,
+        )
+
+
+class TopTracksResponse(BaseModel):
+    tracks: list[TopTrackItem] = []
