@@ -18,5 +18,7 @@
     "lib": "@/lib",
     "hooks": "@/hooks"
   },
-  "registries": {}
+  "registries": {
+    "@ss-blocks": "https://www.shadcnblocks.com/registry/{name}.json"
+  }
 }

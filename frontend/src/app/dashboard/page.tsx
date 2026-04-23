@@ -9,6 +9,10 @@ export default function Dashboard() {
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true") {
+      setAuthed(true);
+      return;
+    }
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
       credentials: "include",
     })
