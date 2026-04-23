@@ -42,8 +42,12 @@ class SongEmbedder(PipelineStage):
 
                 audio_with_metadata: AudioWithMetadata = item
 
-                audio = self._load_song(str(audio_with_metadata.file_path))
-                embedding = self._embed_song(audio)
+                try:
+                    audio = self._load_song(str(audio_with_metadata.file_path))
+                    embedding = self._embed_song(audio)
+                except ValueError as e:
+                    print(f'[SongEmbedder] Skipping {audio_with_metadata.file_path}: {e}')
+                    continue
 
                 embedding_with_metadata = EmbeddingWithMetadata(
                     file_path=audio_with_metadata.file_path,
@@ -74,6 +78,8 @@ class SongEmbedder(PipelineStage):
 
     def _embed_song(self, song):
         frame_embeddings = self.model(song)
+        if not isinstance(frame_embeddings, np.ndarray) or frame_embeddings.ndim == 0 or len(frame_embeddings) == 0:
+            raise ValueError(f"Model returned no frames — audio may be too short ({len(song) / 16000:.2f}s)")
         song_embedding = frame_embeddings.mean(axis=0)
         return song_embedding
 

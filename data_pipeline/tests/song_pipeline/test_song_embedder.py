@@ -47,6 +47,8 @@ def mock_essentia():
     mock_essentia_standard.MonoLoader.reset_mock()
     mock_essentia_standard.TensorflowPredictEffnetDiscogs.reset_mock()
 
+    mock_loader_instance.side_effect = None
+    mock_model_instance.side_effect = None
     mock_loader_instance.return_value = np.zeros(16000)
     mock_model_instance.return_value = np.random.rand(10, 1280)
 
@@ -127,6 +129,27 @@ class TestEmbedSong:
         result = embedder._embed_song(audio)
 
         assert result.shape == (1280,)
+
+    def test_embed_song_raises_when_model_returns_empty_list(self, embedder, mock_essentia):
+        mock_essentia['model_instance'].return_value = []
+        audio = np.zeros(8000)
+
+        with pytest.raises(ValueError, match="no frames"):
+            embedder._embed_song(audio)
+
+    def test_embed_song_raises_when_model_returns_non_empty_list(self, embedder, mock_essentia):
+        mock_essentia['model_instance'].return_value = [[1.0, 2.0], [3.0, 4.0]]
+        audio = np.zeros(8000)
+
+        with pytest.raises(ValueError, match="no frames"):
+            embedder._embed_song(audio)
+
+    def test_embed_song_raises_when_model_returns_empty_ndarray(self, embedder, mock_essentia):
+        mock_essentia['model_instance'].return_value = np.array([])
+        audio = np.zeros(8000)
+
+        with pytest.raises(ValueError, match="no frames"):
+            embedder._embed_song(audio)
 
 
 class TestFlush:
@@ -254,4 +277,76 @@ class TestRun:
         embedder.run()
 
         # Should have sent None and flushed nothing (stopped immediately)
+        assert output_queue.get() is None
+
+    def test_run_skips_track_when_model_returns_no_frames(self, mock_essentia, input_queue, output_queue, stop_event, sample_metadata, tmp_path):
+        embedder = SongEmbedder(input_queue, output_queue, batch_size=16, stop_event=stop_event)
+
+        short_file = tmp_path / "short.mp3"
+        short_file.touch()
+        normal_file = tmp_path / "normal.mp3"
+        normal_file.touch()
+
+        normal_frames = np.random.rand(10, 1280)
+        return_values = [[], normal_frames]
+        call_count = 0
+
+        def side_effect(audio):
+            nonlocal call_count
+            val = return_values[call_count]
+            call_count += 1
+            return val
+
+        mock_essentia['model_instance'].side_effect = side_effect
+        input_queue.put(AudioWithMetadata(file_path=short_file, metadata=sample_metadata))
+        input_queue.put(AudioWithMetadata(file_path=normal_file, metadata=sample_metadata))
+        input_queue.put(None)
+
+        embedder.run()
+
+        batch = output_queue.get()
+        assert len(batch) == 1
+        assert batch[0].file_path == normal_file
+        assert output_queue.get() is None
+
+    def test_run_does_not_crash_on_skipped_track(self, mock_essentia, input_queue, output_queue, stop_event, sample_metadata, tmp_path):
+        embedder = SongEmbedder(input_queue, output_queue, batch_size=16, stop_event=stop_event)
+        mock_essentia['model_instance'].return_value = []
+
+        for i in range(3):
+            audio_file = tmp_path / f"short{i}.mp3"
+            audio_file.touch()
+            input_queue.put(AudioWithMetadata(file_path=audio_file, metadata=sample_metadata))
+        input_queue.put(None)
+
+        embedder.run()
+
+        assert embedder.error is None
+        assert output_queue.get() is None  # only termination signal, no batches
+
+    def test_run_continues_after_skipped_track(self, mock_essentia, input_queue, output_queue, stop_event, sample_metadata, tmp_path):
+        embedder = SongEmbedder(input_queue, output_queue, batch_size=16, stop_event=stop_event)
+
+        valid_frames = np.random.rand(10, 1280)
+        return_values = [[], valid_frames, valid_frames]
+        call_count = 0
+
+        def side_effect(audio):
+            nonlocal call_count
+            val = return_values[call_count]
+            call_count += 1
+            return val
+
+        mock_essentia['model_instance'].side_effect = side_effect
+
+        for i in range(3):
+            audio_file = tmp_path / f"track{i}.mp3"
+            audio_file.touch()
+            input_queue.put(AudioWithMetadata(file_path=audio_file, metadata=sample_metadata))
+        input_queue.put(None)
+
+        embedder.run()
+
+        batch = output_queue.get()
+        assert len(batch) == 2  # track0 skipped, track1 and track2 embedded
         assert output_queue.get() is None
