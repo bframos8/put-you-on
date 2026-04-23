@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Carousel,
   CarouselContent,
@@ -19,8 +19,9 @@ type Song = {
 };
 
 type RecsResponse = {
-  query_title: string;
-  query_artist: string;
+  status: string;
+  query_title: string | null;
+  query_artist: string | null;
   recommendations: Song[];
 };
 
@@ -55,7 +56,16 @@ function RefreshButton({
 
 export function SongRecCarousel() {
   const [recs, setRecs] = useState<RecsResponse | null>(null);
+  const [processing, setProcessing] = useState(false);
   const [retryIn, setRetryIn] = useState<number | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   const fetchRecs = useCallback(async () => {
     const res = await fetch(
@@ -71,12 +81,38 @@ export function SongRecCarousel() {
 
     if (!res.ok) return;
     setRetryIn(null);
-    setRecs(await res.json());
-  }, []);
+
+    const data: RecsResponse = await res.json();
+    if (data.status === "processing") {
+      setProcessing(true);
+      startPolling();
+    } else {
+      setProcessing(false);
+      setRecs(data);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/items/status`,
+        { credentials: "include" }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.status === "ready") {
+        stopPolling();
+        setProcessing(false);
+        fetchRecs();
+      }
+    }, 5000);
+  }, [stopPolling, fetchRecs]);
 
   useEffect(() => {
     fetchRecs();
-  }, [fetchRecs]);
+    return () => stopPolling();
+  }, [fetchRecs, stopPolling]);
 
   // countdown timer
   useEffect(() => {
@@ -86,6 +122,15 @@ export function SongRecCarousel() {
     }, 1000);
     return () => clearInterval(id);
   }, [retryIn]);
+
+  if (processing) {
+    return (
+      <div className="flex flex-col items-center py-8">
+        <p className="text-white text-lg font-semibold">Setting up your recommendations...</p>
+        <p className="text-emerald-400 text-sm mt-2">This takes a minute the first time. Hang tight.</p>
+      </div>
+    );
+  }
 
   if (recs && recs.recommendations.length === 0) {
     return (

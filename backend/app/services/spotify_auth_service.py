@@ -35,6 +35,7 @@ class SpotifyAuthService:
             "redirect_uri": SPOTIFY_REDIRECT_URI,
             "scope": SPOTIFY_SCOPES,
             "state": state,
+            "show_dialog": "true",
         }
         return f"{SPOTIFY_AUTH_URL}?{urlencode(params)}", state
 

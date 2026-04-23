@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Request
+from sqlalchemy import func, case
 
 import essentia
 import numpy as np
@@ -108,8 +109,19 @@ class SpotifyIngestService:
             .all()
         )
         for top_song in unprocessed:
+            existing = db.query(Song).filter(Song.spotify_track_id == top_song.spotify_track_id).first()
+            if existing:
+                top_song.song_id = existing.id
+                db.commit()
+                continue
+
             print(f"Processing: {top_song.track_title} | {top_song.spotify_url}")
-            audio_path = self._download(top_song.spotify_url)
+            try:
+                audio_path = self._download(top_song.spotify_url)
+            except Exception as e:
+                print(f"Skipping {top_song.track_title}: download failed — {e}")
+                continue
+
             print(f"Downloaded to: {audio_path}")
             try:
                 embedding = self._embed(audio_path)
@@ -125,18 +137,24 @@ class SpotifyIngestService:
                 db.add(song)
                 db.flush()
                 top_song.song_id = song.id
-            except Exception:
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"Skipping {top_song.track_title}: processing failed — {e}")
+            finally:
                 self._cleanup(audio_path)
-                raise
-            self._cleanup(audio_path)
-        db.commit()
 
     def snapshot_is_stale(self, user: User, db: Session) -> bool:
-        top_songs = db.query(UserTopSong).filter(UserTopSong.user_id == user.id).all()
-        if not top_songs:
+        result = db.query(
+            func.count().label("total"),
+            func.count(UserTopSong.song_id).label("processed"),
+            func.sum(case((UserTopSong.used_as_query == True, 1), else_=0)).label("queried"),
+        ).filter(UserTopSong.user_id == user.id).one()
+
+        if result.total == 0:
             return True
-        has_unprocessed = any(ts.song_id is None for ts in top_songs)
-        all_queried = all(ts.used_as_query for ts in top_songs)
+        has_unprocessed = result.processed < result.total
+        all_queried = result.queried == result.total
         return has_unprocessed or all_queried
 
     def query_recommendations(self, user: User, db: Session, limit: int = 10) -> list[Song]:
@@ -150,6 +168,7 @@ class SpotifyIngestService:
             .first()
         )
         query_song = query_entry.song
+        spotify_genre = query_entry.genre  # genre sourced from Spotify via UserTopSong
         query_entry.used_as_query = True
 
         already_recommended = (
@@ -166,13 +185,14 @@ class SpotifyIngestService:
             .order_by(Song.embedding.cosine_distance(query_song.embedding))
         )
 
-        # Try genre-filtered first; fall back to all genres if not enough results
+        # Filter candidates by album genre matching the Spotify song's genre.
+        # Candidate genre is derived from the album they belong to (Album.genre).
         results = []
-        if query_song.genre:
+        if spotify_genre:
             results = (
                 base_query
                 .join(Song.album)
-                .filter(Album.genre == query_song.genre)
+                .filter(Album.genre == spotify_genre)
                 .limit(limit)
                 .all()
             )

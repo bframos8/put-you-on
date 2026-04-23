@@ -22,6 +22,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     app.state.ingest_service = SpotifyIngestService()
     app.state.oauth_states = {}
+    app.state.processing_users = set()
     yield
     engine.dispose()
 

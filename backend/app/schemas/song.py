@@ -3,9 +3,10 @@ from ..db.models import Song
 
 
 class RecsResponse(BaseModel):
-    query_title: str
-    query_artist: str
-    recommendations: list["SongResponse"]
+    status: str = "ready"
+    query_title: str | None = None
+    query_artist: str | None = None
+    recommendations: list["SongResponse"] = []
 
 
 class SongResponse(BaseModel):
