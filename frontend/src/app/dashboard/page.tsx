@@ -133,9 +133,7 @@ export default function Dashboard() {
               ↩ YOUR TOP TEN
             </a>
             <button
-              onClick={() => {
-                window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`;
-              }}
+              onClick={() => router.push("/logout")}
               className="inline-flex items-center gap-2 border border-[color:var(--ink)] px-4 py-2 label hover:bg-[color:var(--ink)] hover:text-[color:var(--paper)] transition-colors"
             >
               <LogOut size={14} />

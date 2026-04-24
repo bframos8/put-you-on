@@ -1,6 +1,6 @@
 import os
 import time
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -65,9 +65,9 @@ async def me(request: Request, user: User = Depends(get_current_user)):
     return {"display_name": user.display_name, "email": user.email}
 
 
-@router.get("/logout")
+@router.post("/logout")
 @limiter.limit("10/minute", key_func=session_key)
 async def logout(request: Request):
-    response = RedirectResponse(url=get_frontend_url())
-    response.delete_cookie("session")
+    response = Response(status_code=204)
+    response.delete_cookie("session", secure=True, samesite="none")
     return response

@@ -5,8 +5,8 @@ Auth strategy
 -------------
 Protected endpoint requires a valid session cookie.  We generate real tokens
 with create_session() and let get_current_user run its actual DB-lookup logic
-against the mocked Session.  Spotify API calls (refresh_tokens, get_top_tracks,
-get_track_genres) are mocked with AsyncMock.
+against the mocked Session.  Spotify API calls (refresh_tokens, get_top_tracks)
+are mocked with AsyncMock.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -119,7 +119,6 @@ class TestSongRecsStaleSnapshot:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])) as mock_tracks,
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             client.get(RECS_URL, cookies={"session": valid_session})
 
@@ -131,7 +130,6 @@ class TestSongRecsStaleSnapshot:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             client.get(RECS_URL, cookies={"session": valid_session})
 
@@ -143,7 +141,6 @@ class TestSongRecsStaleSnapshot:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             resp = client.get(RECS_URL, cookies={"session": valid_session})
 
@@ -157,7 +154,6 @@ class TestSongRecsStaleSnapshot:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             resp = client.get(RECS_URL, cookies={"session": valid_session})
 
@@ -171,7 +167,6 @@ class TestSongRecsStaleSnapshot:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             resp = client.get(RECS_URL, cookies={"session": valid_session})
 
@@ -246,7 +241,6 @@ class TestSongRecsEdgeCases:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=refreshed_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])) as mock_tracks,
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             client.get(RECS_URL, cookies={"session": valid_session})
 

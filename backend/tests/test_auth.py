@@ -301,20 +301,18 @@ class TestMe:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestLogout:
-    def test_logout_redirects_to_frontend(self, client):
-        resp = client.get(f"{PREFIX}/logout", follow_redirects=False)
-        assert resp.status_code in (302, 307)
-        assert resp.headers["location"] == FRONTEND
+    def test_logout_returns_204(self, client):
+        resp = client.post(f"{PREFIX}/logout")
+        assert resp.status_code == 204
 
-    def test_logout_without_session_still_redirects(self, client):
-        resp = client.get(f"{PREFIX}/logout", follow_redirects=False)
-        assert resp.status_code in (302, 307)
+    def test_logout_without_session_still_succeeds(self, client):
+        resp = client.post(f"{PREFIX}/logout")
+        assert resp.status_code == 204
 
     def test_logout_clears_session_cookie(self, client, valid_session):
-        resp = client.get(
+        resp = client.post(
             f"{PREFIX}/logout",
             cookies={"session": valid_session},
-            follow_redirects=False,
         )
         # Starlette's delete_cookie sets Max-Age=0
         set_cookie = resp.headers.get("set-cookie", "").lower()

@@ -1,19 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { MenuIcon, X } from "lucide-react";
 import Logo from "@/components/shadcn-studio/logo";
 
-const navItems = [
+type AuthState = "unknown" | "authed" | "anon";
+
+const BASE_ITEMS = [
   { title: "Dispatch", href: "/", num: "01" },
   { title: "Profile", href: "/profile", num: "02" },
   { title: "Queue", href: "/dashboard", num: "03" },
-  { title: "Logout", href: "/logout", num: "04" },
 ];
+
+const AUTHED_ITEM = { title: "Logout", href: "/logout", num: "04" };
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
   const [time, setTime] = useState("");
+  const [auth, setAuth] = useState<AuthState>("unknown");
+  const pathname = usePathname();
 
   useEffect(() => {
     const tick = () => {
@@ -27,6 +33,37 @@ const Navbar = () => {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true") {
+      setAuth("authed");
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
+      credentials: "include",
+      signal: controller.signal,
+    })
+      .then((res) => setAuth(res.ok ? "authed" : "anon"))
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        setAuth("anon");
+      });
+    return () => controller.abort();
+  }, [pathname]);
+
+  const navItems = useMemo(() => {
+    if (auth === "unknown") return BASE_ITEMS;
+    if (auth === "authed") return [...BASE_ITEMS, AUTHED_ITEM];
+    return [
+      ...BASE_ITEMS,
+      {
+        title: "Log in",
+        href: `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/spotify/login`,
+        num: "04",
+      },
+    ];
+  }, [auth]);
 
   return (
     <header className="fixed inset-x-0 top-0 z-[40]">

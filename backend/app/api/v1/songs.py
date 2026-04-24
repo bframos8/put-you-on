@@ -53,8 +53,7 @@ async def get_recs(
 
     if ingest_service.snapshot_is_stale(user, db):
         tracks = await auth_service.get_top_tracks(user.spotify_access_token)
-        genre_map = await auth_service.get_track_genres(tracks, user.spotify_access_token)
-        ingest_service.add_user_top_songs(tracks, user, db, genre_map=genre_map)
+        ingest_service.add_user_top_songs(tracks, user, db)
         processing_users.add(user.id)
 
         from ...db.database import SessionLocal
