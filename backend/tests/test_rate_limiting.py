@@ -191,7 +191,7 @@ class TestLogoutRateLimit:
                 _reset_limits(app)
                 app.state.ingest_service = mock_ingest
                 statuses = [
-                    c.get(
+                    c.post(
                         "/api/v1/auth/logout",
                         cookies={"session": valid_session},
                         follow_redirects=False,

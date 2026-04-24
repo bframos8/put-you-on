@@ -135,7 +135,7 @@ class TestSongRecsStaleSnapshot:
 
         mock_ingest.add_user_top_songs.assert_called_once()
 
-    def test_stale_snapshot_calls_process_top_tracks(self, client, valid_session, mock_user, mock_ingest):
+    def test_stale_snapshot_returns_processing_status(self, client, valid_session, mock_user, mock_ingest):
         mock_ingest.snapshot_is_stale.return_value = True
 
         with (
@@ -144,34 +144,48 @@ class TestSongRecsStaleSnapshot:
         ):
             resp = client.get(RECS_URL, cookies={"session": valid_session})
 
-        mock_ingest.process_top_tracks.assert_called_once()
         assert resp.status_code == 200
+        assert resp.json()["status"] == "processing"
 
-    def test_process_top_tracks_exception_returns_500(self, client, valid_session, mock_user, mock_ingest):
-        mock_ingest.snapshot_is_stale.return_value = True
-        mock_ingest.process_top_tracks.side_effect = RuntimeError("Audio processing failed")
 
-        with (
-            patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
-            patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-        ):
-            resp = client.get(RECS_URL, cookies={"session": valid_session})
+# ══════════════════════════════════════════════════════════════════════════════
+# Background task — _run_process_top_tracks
+# ══════════════════════════════════════════════════════════════════════════════
 
-        assert resp.status_code == 500
-        assert "Audio processing failed" in resp.json()["detail"]
+class TestRunProcessTopTracks:
+    def test_calls_process_top_tracks_and_discards_user(self, mock_db, mock_ingest, mock_user):
+        from app.api.v1.songs import _run_process_top_tracks
 
-    def test_process_top_tracks_generic_exception_detail_propagated(self, client, valid_session, mock_user, mock_ingest):
-        mock_ingest.snapshot_is_stale.return_value = True
-        mock_ingest.process_top_tracks.side_effect = Exception("spotdl crashed")
+        processing_users = {mock_user.id}
+        _run_process_top_tracks(mock_user.id, mock_ingest, mock_db, processing_users)
 
-        with (
-            patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
-            patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-        ):
-            resp = client.get(RECS_URL, cookies={"session": valid_session})
+        mock_ingest.process_top_tracks.assert_called_once_with(mock_user, mock_db)
+        assert mock_user.id not in processing_users
+        mock_db.close.assert_called_once()
 
-        assert resp.status_code == 500
-        assert "spotdl crashed" in resp.json().get("detail", "")
+    def test_cleans_up_when_process_top_tracks_raises(self, mock_db, mock_ingest, mock_user):
+        from app.api.v1.songs import _run_process_top_tracks
+
+        mock_ingest.process_top_tracks.side_effect = RuntimeError("spotdl crashed")
+        processing_users = {mock_user.id}
+
+        with pytest.raises(RuntimeError, match="spotdl crashed"):
+            _run_process_top_tracks(mock_user.id, mock_ingest, mock_db, processing_users)
+
+        assert mock_user.id not in processing_users
+        mock_db.close.assert_called_once()
+
+    def test_skips_ingest_when_user_not_found(self, mock_db, mock_ingest):
+        from app.api.v1.songs import _run_process_top_tracks
+
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        processing_users = {42}
+
+        _run_process_top_tracks(42, mock_ingest, mock_db, processing_users)
+
+        mock_ingest.process_top_tracks.assert_not_called()
+        assert 42 not in processing_users
+        mock_db.close.assert_called_once()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

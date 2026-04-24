@@ -54,7 +54,7 @@ export default function Dashboard() {
           <span className="label text-[color:var(--mist)]">TUNING IN…</span>
           <p className="font-display text-4xl md:text-5xl leading-[1]">
             Warming the{" "}
-            <span className="italic font-display-soft">tape heads.</span>
+            <span className="font-display-soft">tape heads.</span>
           </p>
         </div>
       </div>
@@ -89,7 +89,7 @@ export default function Dashboard() {
               style={{ animationDelay: "0.05s" }}
             >
               <span className="block">The{" "}
-                <span className="italic font-display-soft">queue</span>,
+                <span className="font-display-soft">queue</span>,
               </span>
               <span className="block">freshly pressed.</span>
             </h1>
@@ -120,7 +120,7 @@ export default function Dashboard() {
             </span>
             <p className="font-display text-2xl md:text-3xl leading-[1.1] mt-2 max-w-[40ch]">
               Curated by nearest-neighbor vectors and{" "}
-              <span className="italic font-display-soft">
+              <span className="font-display-soft">
                 editorial instinct.
               </span>
             </p>
@@ -149,7 +149,7 @@ export default function Dashboard() {
           className="font-display leading-none text-[clamp(5rem,20vw,18rem)] tracking-[-0.06em] whitespace-nowrap text-center py-3"
           aria-hidden
         >
-          END <span className="italic font-display-soft">of side A</span>
+          END <span className="font-display-soft">of side A</span>
         </div>
       </section>
     </div>

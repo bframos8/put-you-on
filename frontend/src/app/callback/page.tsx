@@ -55,7 +55,7 @@ function Tuning() {
       <span className="label mt-6 text-[color:var(--mist)]">§ TUNING IN</span>
       <p className="font-display text-5xl md:text-6xl leading-[0.95] mt-3">
         Catching the{" "}
-        <span className="italic font-display-soft">signal…</span>
+        <span className="font-display-soft">signal…</span>
       </p>
       <p className="font-mono text-sm text-[color:var(--mist)] mt-4">
         Handshake with Spotify in progress. Don&rsquo;t touch that dial.

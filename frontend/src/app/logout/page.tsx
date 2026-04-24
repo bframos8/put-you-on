@@ -44,7 +44,7 @@ export default function LogoutPage() {
           </span>
           <p className="font-display text-5xl md:text-6xl leading-[0.95] mt-3">
             Cutting the{" "}
-            <span className="italic font-display-soft">transmission…</span>
+            <span className="font-display-soft">transmission…</span>
           </p>
           <p className="font-mono text-sm text-[color:var(--mist)] mt-4">
             Rewinding your tape. One moment.
@@ -97,11 +97,11 @@ export default function LogoutPage() {
                 {state === "error" ? (
                   <>
                     We&rsquo;ll try the{" "}
-                    <span className="italic font-display-soft">next</span>
+                    <span className="font-display-soft">next</span>
                   </>
                 ) : (
                   <>
-                    Until the <span className="italic font-display-soft">next</span>
+                    Until the <span className="font-display-soft">next</span>
                   </>
                 )}
               </span>
@@ -130,7 +130,7 @@ export default function LogoutPage() {
                 ) : (
                   <>
                     Your session has been{" "}
-                    <span className="italic font-display-soft">cut</span>. Come
+                    <span className="font-display-soft">cut</span>. Come
                     back when you want the next issue.
                   </>
                 )}
@@ -188,7 +188,7 @@ export default function LogoutPage() {
           aria-hidden
         >
           goodnight{" "}
-          <span className="italic font-display-soft">/ listener</span>
+          <span className="font-display-soft">/ listener</span>
         </div>
       </section>
     </div>

@@ -133,7 +133,7 @@ export function SongRecCarousel() {
         </span>
         <p className="font-display text-4xl md:text-5xl leading-[0.95] mt-3">
           Cutting the{" "}
-          <span className="italic font-display-soft">acetate…</span>
+          <span className="font-display-soft">acetate…</span>
         </p>
         <p className="font-mono text-sm text-[color:var(--mist)] mt-4 max-w-sm leading-relaxed">
           First issue always takes a minute. The machines are listening back to
@@ -151,7 +151,7 @@ export function SongRecCarousel() {
         </span>
         <p className="font-display text-4xl md:text-5xl leading-[0.95] mt-3 max-w-[20ch]">
           You&rsquo;re{" "}
-          <span className="italic font-display-soft">caught up.</span>
+          <span className="font-display-soft">caught up.</span>
         </p>
         <p className="font-mono text-sm text-[color:var(--mist)] mt-3">
           Come back tomorrow for a fresh issue.
@@ -169,12 +169,12 @@ export function SongRecCarousel() {
   return (
     <div className="w-full">
       {/* header strip */}
-      <div className="flex flex-wrap items-end justify-between gap-4 pb-4 border-b-2 border-[color:var(--ink)]">
+      <div className="flex flex-wrap items-end justify-between gap-4 pb-3 border-b-2 border-[color:var(--ink)]">
         <div>
           <span className="label">§ 04 — DISPATCH FOR TODAY</span>
-          <h2 className="font-display text-4xl md:text-6xl leading-[0.9] mt-3 max-w-[20ch]">
+          <h2 className="font-display text-3xl md:text-4xl leading-[0.95] mt-2 max-w-[22ch]">
             Ten songs, {" "}
-            <span className="italic font-display-soft">
+            <span className="font-display-soft">
               in the key of
             </span>{" "}
             &ldquo;{recs?.query_title}&rdquo;
@@ -220,9 +220,10 @@ export function SongRecCarousel() {
         </div>
       </div>
 
-      <div className="grid grid-cols-12 gap-8 pt-10">
+      <div className="grid grid-cols-12 gap-6 md:gap-8 pt-6">
         {/* ─── Featured spread ─── */}
-        <div className="col-span-12 lg:col-span-7">
+        <div className="col-span-12 lg:col-span-5">
+          <div className="mx-auto w-full max-w-[360px]">
           <Carousel index={index} onIndexChange={setIndex}>
             <CarouselContent>
               {tracks.map((song, i) => (
@@ -243,24 +244,24 @@ export function SongRecCarousel() {
                         />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center text-[color:var(--paper)]">
-                          <Disc3 size={64} />
+                          <Disc3 size={56} />
                         </div>
                       )}
                       {/* catalog corner */}
-                      <div className="absolute top-3 left-3 label num bg-[color:var(--paper)] border border-[color:var(--ink)] px-2 py-1">
+                      <div className="absolute top-2 left-2 label num bg-[color:var(--paper)] border border-[color:var(--ink)] px-2 py-1">
                         N° {(i + 1).toString().padStart(2, "0")}
                       </div>
-                      <div className="absolute top-3 right-3 label bg-[color:var(--acid)] border border-[color:var(--ink)] px-2 py-1">
+                      <div className="absolute top-2 right-2 label bg-[color:var(--acid)] border border-[color:var(--ink)] px-2 py-1">
                         PYO / 2026
                       </div>
                     </div>
                     {/* sleeve label plate */}
-                    <div className="flex items-baseline justify-between gap-4 border-t border-[color:var(--ink)] px-4 py-3 bg-[color:var(--paper)]">
+                    <div className="flex items-baseline justify-between gap-3 border-t border-[color:var(--ink)] px-3 py-2 bg-[color:var(--paper)]">
                       <div className="min-w-0">
-                        <p className="font-display text-2xl leading-tight truncate">
+                        <p className="font-display text-lg leading-tight truncate">
                           {song.title}
                         </p>
-                        <p className="font-mono text-[0.78rem] text-[color:var(--mist)] truncate mt-1">
+                        <p className="font-mono text-[0.7rem] text-[color:var(--mist)] truncate mt-0.5">
                           {song.artist_name} · {song.album_title}
                         </p>
                       </div>
@@ -271,10 +272,11 @@ export function SongRecCarousel() {
               ))}
             </CarouselContent>
           </Carousel>
+          </div>
         </div>
 
         {/* ─── Side contents list ─── */}
-        <div className="col-span-12 lg:col-span-5">
+        <div className="col-span-12 lg:col-span-7">
           <div className="flex items-end justify-between pb-3 border-b-2 border-[color:var(--ink)]">
             <span className="label">§ FULL CONTENTS</span>
             <span className="label num text-[color:var(--mist)]">

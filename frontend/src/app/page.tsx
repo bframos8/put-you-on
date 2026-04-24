@@ -78,7 +78,7 @@ export default function Home() {
           <div className="col-span-12 lg:col-span-9">
             <h1 className="font-display text-[clamp(3.6rem,14vw,12.5rem)] leading-[0.82]">
               <span className="block rise" style={{ animationDelay: "0.05s" }}>
-                Put <span className="italic font-display-soft">you</span>
+                Put <span className="font-display-soft">you</span>
               </span>
               <span
                 className="block rise pl-[0.06em]"
@@ -91,13 +91,13 @@ export default function Home() {
                 style={{ animationDelay: "0.35s" }}
               >
                 <span className="acid-underline">you haven&rsquo;t</span>{" "}
-                <span className="italic font-display-soft">heard</span>
+                <span className="font-display-soft">heard</span>
               </span>
               <span
                 className="block rise"
                 style={{ animationDelay: "0.5s" }}
               >
-                <span className="italic font-display-soft">yet.</span>
+                <span className="font-display-soft">yet.</span>
               </span>
             </h1>
           </div>
@@ -111,7 +111,7 @@ export default function Home() {
               <span className="label">{/* inline arrow */}— FROM THE EDITORS</span>
               <p className="font-display text-[1.3rem] leading-[1.25] -tracking-[0.01em]">
                 A handpicked dispatch of music lifted straight from{" "}
-                <span className="italic font-display-soft">your own ear</span>.
+                <span className="font-display-soft">your own ear</span>.
                 Made by nearest-neighbor vectors and nights that went too long.
               </p>
               <div className="rule rule-animate" style={{ animationDelay: "1s" }} />
@@ -151,7 +151,7 @@ export default function Home() {
               <span className="label">§ 01 — METHOD</span>
               <h2 className="font-display text-5xl md:text-6xl leading-[0.9] mt-4">
                 How we{" "}
-                <span className="italic font-display-soft">hear</span> you.
+                <span className="font-display-soft">hear</span> you.
               </h2>
               <div className="rule mt-6" />
               <p className="font-mono text-[0.78rem] mt-4 text-[color:var(--mist)] leading-relaxed">
@@ -176,7 +176,7 @@ export default function Home() {
                       key={wi}
                       className={
                         (i === 1 && wi === 0) || (i === 2 && wi === 2)
-                          ? "italic font-display-soft"
+                          ? "font-display-soft"
                           : ""
                       }
                     >
@@ -200,7 +200,7 @@ export default function Home() {
             <span className="label">§ 02 — SAMPLE DISPATCH</span>
             <h2 className="font-display text-4xl md:text-6xl leading-[0.9] mt-3">
               A page from{" "}
-              <span className="italic font-display-soft">last week&rsquo;s</span>{" "}
+              <span className="font-display-soft">last week&rsquo;s</span>{" "}
               issue.
             </h2>
           </div>
@@ -249,7 +249,7 @@ export default function Home() {
             <span className="label text-[color:var(--acid)]">[ JOIN THE DISPATCH ]</span>
             <h2 className="font-display text-[clamp(2.8rem,8vw,7rem)] leading-[0.88] mt-4">
               Ten songs.{" "}
-              <span className="italic font-display-soft">Every day.</span>{" "}
+              <span className="font-display-soft">Every day.</span>{" "}
               <span className="acid-underline text-[color:var(--ink)]">
                 Yours.
               </span>
@@ -266,7 +266,7 @@ export default function Home() {
             className="font-display leading-none text-[clamp(7rem,26vw,22rem)] tracking-[-0.06em] whitespace-nowrap text-center py-3"
             aria-hidden
           >
-            P · Y · O <span className="italic font-display-soft">/ 2026</span>
+            P · Y · O <span className="font-display-soft">/ 2026</span>
           </div>
         </div>
       </section>

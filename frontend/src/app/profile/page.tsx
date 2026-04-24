@@ -169,7 +169,7 @@ export default function ProfilePage() {
                 style={{ animationDelay: "0.1s" }}
               >
                 <span className="block">
-                  <span className="italic font-display-soft">Hello,</span>
+                  <span className="font-display-soft">Hello,</span>
                 </span>
                 <span className="block">{firstName}.</span>
               </h1>
@@ -180,7 +180,7 @@ export default function ProfilePage() {
                 <p className="font-display text-[1.35rem] leading-[1.25] max-w-[60ch] -tracking-[0.005em]">
                   A dispatch of your ten most-played songs, with a side of what
                   our machines think they say about you. Read it as a{" "}
-                  <span className="italic font-display-soft">
+                  <span className="font-display-soft">
                     listening notebook
                   </span>
                   &nbsp;— not a diagnosis.
@@ -225,7 +225,7 @@ export default function ProfilePage() {
               className="border border-[color:var(--ink)] px-4 py-2 font-display text-lg rise"
               style={{ animationDelay: `${0.2 + i * 0.08}s` }}
             >
-              <span className="italic font-display-soft">{d}</span>
+              <span className="font-display-soft">{d}</span>
             </span>
           ))}
         </div>
@@ -238,7 +238,7 @@ export default function ProfilePage() {
             <span className="label">§ 03 — CONTENTS</span>
             <h2 className="font-display text-5xl md:text-7xl leading-[0.9] mt-3">
               The top ten,{" "}
-              <span className="italic font-display-soft">
+              <span className="font-display-soft">
                 straight from your ear.
               </span>
             </h2>
@@ -348,7 +348,7 @@ export default function ProfilePage() {
             <span className="label">NEXT UP</span>
             <span className="font-display text-3xl md:text-4xl -tracking-[0.02em]">
               Your recommendations{" "}
-              <span className="italic font-display-soft">→</span>
+              <span className="font-display-soft">→</span>
             </span>
           </a>
         </div>
@@ -361,7 +361,7 @@ export default function ProfilePage() {
           aria-hidden
         >
           {firstName.toLowerCase()}{" "}
-          <span className="italic font-display-soft">/ on file</span>
+          <span className="font-display-soft">/ on file</span>
         </div>
       </section>
     </div>
@@ -398,7 +398,7 @@ function EmptyTracks() {
       <span className="label">NO TRACKS ON FILE · YET</span>
       <p className="font-display text-4xl md:text-5xl leading-[1] max-w-[24ch]">
         Play a few songs on Spotify.{" "}
-        <span className="italic font-display-soft">
+        <span className="font-display-soft">
           Your file fills itself.
         </span>
       </p>
@@ -407,7 +407,7 @@ function EmptyTracks() {
         className="mt-2 inline-flex items-center gap-3 border border-[color:var(--ink)] px-5 py-3 font-display text-xl hover:bg-[color:var(--ink)] hover:text-[color:var(--paper)] transition-colors"
       >
         Head to your dispatch{" "}
-        <span className="italic font-display-soft">→</span>
+        <span className="font-display-soft">→</span>
       </a>
     </div>
   );

@@ -53,7 +53,7 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
         value=create_session(user.id),
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite="lax",
         max_age=60 * 60 * 24 * 30,
     )
     return response
@@ -69,5 +69,5 @@ async def me(request: Request, user: User = Depends(get_current_user)):
 @limiter.limit("10/minute", key_func=session_key)
 async def logout(request: Request):
     response = Response(status_code=204)
-    response.delete_cookie("session", secure=True, samesite="none")
+    response.delete_cookie("session", secure=True, samesite="lax")
     return response
