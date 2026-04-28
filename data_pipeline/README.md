@@ -7,5 +7,3 @@ Once PSQL database is initilized,
 4. Delete audio from local memory to avoid memory usage, lowering costs. 
 3. Contanerize for future cloud deployment
 
-For security reasons, some initialization files have been excluded.
-Example files have been provided instead. 

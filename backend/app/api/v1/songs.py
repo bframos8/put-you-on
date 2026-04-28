@@ -1,11 +1,12 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from ...core.daily import DAILY_LIMIT_BYPASS, next_midnight_pst
 from ...db.database import get_db
-from ...db.models import User, Song
+from ...db.models import Song, User, UserTopSong
 from ...core.dependencies import get_current_user
 from ...core.limiter import limiter, session_key
-from ...schemas.song import SongResponse, RecsResponse
+from ...schemas.song import SongResponse, RecsResponse, TopTrackItem, TopTracksResponse
 from ...services.spotify_auth_service import SpotifyAuthService
 from ...services.spotify_ingest_service import SpotifyIngestService, get_ingest_service
 
@@ -22,6 +23,17 @@ def _run_process_top_tracks(user_id: int, ingest_service: SpotifyIngestService, 
     finally:
         processing_users.discard(user_id)
         db.close()
+
+
+def _dispatch_response(query_song: Song, results: list[Song], locked: bool) -> RecsResponse:
+    return RecsResponse(
+        status="ready",
+        query_title=query_song.title,
+        query_artist=query_song.artist_name,
+        recommendations=[SongResponse.from_song(s) for s in results],
+        locked_for_today=locked,
+        next_dispatch_at=next_midnight_pst().isoformat() if locked else None,
+    )
 
 
 @router.get("/status")
@@ -51,10 +63,20 @@ async def get_recs(
     if user.id in processing_users:
         return RecsResponse(status="processing")
 
+    # Row-level lock on the user serializes concurrent dispatch generation
+    # so a single user can't race their way to more than 10 recs per day.
+    db.query(User).filter(User.id == user.id).with_for_update().one()
+
+    if not DAILY_LIMIT_BYPASS:
+        existing = ingest_service.get_todays_dispatch(user, db)
+        if existing:
+            query_song, results = existing
+            db.commit()
+            return _dispatch_response(query_song, results, locked=True)
+
     if ingest_service.snapshot_is_stale(user, db):
         tracks = await auth_service.get_top_tracks(user.spotify_access_token)
-        genre_map = await auth_service.get_track_genres(tracks, user.spotify_access_token)
-        ingest_service.add_user_top_songs(tracks, user, db, genre_map=genre_map)
+        ingest_service.add_user_top_songs(tracks, user, db)
         processing_users.add(user.id)
 
         from ...db.database import SessionLocal
@@ -65,9 +87,21 @@ async def get_recs(
         return RecsResponse(status="processing")
 
     query_song, results = ingest_service.query_recommendations(user, db)
-    return RecsResponse(
-        status="ready",
-        query_title=query_song.title,
-        query_artist=query_song.artist_name,
-        recommendations=[SongResponse.from_song(s) for s in results],
+    return _dispatch_response(query_song, results, locked=not DAILY_LIMIT_BYPASS)
+
+
+@router.get("/top_tracks/")
+@limiter.limit("30/minute", key_func=session_key)
+async def get_top_tracks(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TopTracksResponse:
+    rows = (
+        db.query(UserTopSong)
+        .filter(UserTopSong.user_id == user.id)
+        .order_by(UserTopSong.id.asc())
+        .limit(10)
+        .all()
     )
+    return TopTracksResponse(tracks=[TopTrackItem.from_user_top_song(r) for r in rows])

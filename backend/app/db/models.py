@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, Enum, ForeignKey, Integer, Text
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Enum, ForeignKey, Integer, Text
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
@@ -82,7 +82,11 @@ class Song(Base):
 
     album = relationship("Album", back_populates="songs")
     user_top_songs = relationship("UserTopSong", back_populates="song")
-    recommendations = relationship("UserRecommendation", back_populates="song")
+    recommendations = relationship(
+        "UserRecommendation",
+        foreign_keys="[UserRecommendation.song_id]",
+        back_populates="song",
+    )
 
 
 class UserTopSong(Base):
@@ -111,7 +115,10 @@ class UserRecommendation(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     song_id = Column(Integer, ForeignKey("songs.id"), nullable=False)
+    query_song_id = Column(Integer, ForeignKey("songs.id"))
+    dispatch_date = Column(Date, index=True)
     recommended_at = Column(DateTime, default=datetime.now)
 
     user = relationship("User", back_populates="recommendations")
-    song = relationship("Song", back_populates="recommendations")
+    song = relationship("Song", foreign_keys=[song_id], back_populates="recommendations")
+    query_song = relationship("Song", foreign_keys=[query_song_id])

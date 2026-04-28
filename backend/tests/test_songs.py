@@ -5,8 +5,8 @@ Auth strategy
 -------------
 Protected endpoint requires a valid session cookie.  We generate real tokens
 with create_session() and let get_current_user run its actual DB-lookup logic
-against the mocked Session.  Spotify API calls (refresh_tokens, get_top_tracks,
-get_track_genres) are mocked with AsyncMock.
+against the mocked Session.  Spotify API calls (refresh_tokens, get_top_tracks)
+are mocked with AsyncMock.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -119,7 +119,6 @@ class TestSongRecsStaleSnapshot:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])) as mock_tracks,
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             client.get(RECS_URL, cookies={"session": valid_session})
 
@@ -131,52 +130,62 @@ class TestSongRecsStaleSnapshot:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             client.get(RECS_URL, cookies={"session": valid_session})
 
         mock_ingest.add_user_top_songs.assert_called_once()
 
-    def test_stale_snapshot_calls_process_top_tracks(self, client, valid_session, mock_user, mock_ingest):
+    def test_stale_snapshot_returns_processing_status(self, client, valid_session, mock_user, mock_ingest):
         mock_ingest.snapshot_is_stale.return_value = True
 
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             resp = client.get(RECS_URL, cookies={"session": valid_session})
 
-        mock_ingest.process_top_tracks.assert_called_once()
         assert resp.status_code == 200
+        assert resp.json()["status"] == "processing"
 
-    def test_process_top_tracks_exception_returns_500(self, client, valid_session, mock_user, mock_ingest):
-        mock_ingest.snapshot_is_stale.return_value = True
-        mock_ingest.process_top_tracks.side_effect = RuntimeError("Audio processing failed")
 
-        with (
-            patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
-            patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
-        ):
-            resp = client.get(RECS_URL, cookies={"session": valid_session})
+# ══════════════════════════════════════════════════════════════════════════════
+# Background task — _run_process_top_tracks
+# ══════════════════════════════════════════════════════════════════════════════
 
-        assert resp.status_code == 500
-        assert "Audio processing failed" in resp.json()["detail"]
+class TestRunProcessTopTracks:
+    def test_calls_process_top_tracks_and_discards_user(self, mock_db, mock_ingest, mock_user):
+        from app.api.v1.songs import _run_process_top_tracks
 
-    def test_process_top_tracks_generic_exception_detail_propagated(self, client, valid_session, mock_user, mock_ingest):
-        mock_ingest.snapshot_is_stale.return_value = True
-        mock_ingest.process_top_tracks.side_effect = Exception("spotdl crashed")
+        processing_users = {mock_user.id}
+        _run_process_top_tracks(mock_user.id, mock_ingest, mock_db, processing_users)
 
-        with (
-            patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
-            patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])),
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
-        ):
-            resp = client.get(RECS_URL, cookies={"session": valid_session})
+        mock_ingest.process_top_tracks.assert_called_once_with(mock_user, mock_db)
+        assert mock_user.id not in processing_users
+        mock_db.close.assert_called_once()
 
-        assert resp.status_code == 500
-        assert "spotdl crashed" in resp.json().get("detail", "")
+    def test_cleans_up_when_process_top_tracks_raises(self, mock_db, mock_ingest, mock_user):
+        from app.api.v1.songs import _run_process_top_tracks
+
+        mock_ingest.process_top_tracks.side_effect = RuntimeError("spotdl crashed")
+        processing_users = {mock_user.id}
+
+        with pytest.raises(RuntimeError, match="spotdl crashed"):
+            _run_process_top_tracks(mock_user.id, mock_ingest, mock_db, processing_users)
+
+        assert mock_user.id not in processing_users
+        mock_db.close.assert_called_once()
+
+    def test_skips_ingest_when_user_not_found(self, mock_db, mock_ingest):
+        from app.api.v1.songs import _run_process_top_tracks
+
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        processing_users = {42}
+
+        _run_process_top_tracks(42, mock_ingest, mock_db, processing_users)
+
+        mock_ingest.process_top_tracks.assert_not_called()
+        assert 42 not in processing_users
+        mock_db.close.assert_called_once()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -246,11 +255,55 @@ class TestSongRecsEdgeCases:
         with (
             patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=refreshed_user)),
             patch("app.api.v1.songs.auth_service.get_top_tracks", new=AsyncMock(return_value=[])) as mock_tracks,
-            patch("app.api.v1.songs.auth_service.get_track_genres", new=AsyncMock(return_value={})),
         ):
             client.get(RECS_URL, cookies={"session": valid_session})
 
         mock_tracks.assert_called_once_with("brand_new_access_token")
+
+    def test_newly_generated_dispatch_is_locked_for_today(
+        self, client, valid_session, mock_user, mock_ingest, mock_query_song, mock_rec_song
+    ):
+        mock_ingest.snapshot_is_stale.return_value = False
+        mock_ingest.get_todays_dispatch.return_value = None
+        mock_ingest.query_recommendations.return_value = (mock_query_song, [mock_rec_song])
+
+        with patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)):
+            resp = client.get(RECS_URL, cookies={"session": valid_session})
+
+        data = resp.json()
+        assert data["locked_for_today"] is True
+        assert data["next_dispatch_at"] is not None
+
+    def test_existing_dispatch_short_circuits_generation(
+        self, client, valid_session, mock_user, mock_ingest, mock_query_song, mock_rec_song
+    ):
+        """If today's batch already exists, we must not call query_recommendations."""
+        mock_ingest.get_todays_dispatch.return_value = (mock_query_song, [mock_rec_song])
+
+        with patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)):
+            resp = client.get(RECS_URL, cookies={"session": valid_session})
+
+        assert resp.status_code == 200
+        assert resp.json()["locked_for_today"] is True
+        mock_ingest.query_recommendations.assert_not_called()
+
+    def test_bypass_flag_skips_todays_dispatch_check(
+        self, client, valid_session, mock_user, mock_ingest, mock_query_song, mock_rec_song
+    ):
+        """With DAILY_LIMIT_BYPASS enabled, existing batches are ignored and a new one is generated."""
+        mock_ingest.get_todays_dispatch.return_value = (mock_query_song, [mock_rec_song])
+        mock_ingest.snapshot_is_stale.return_value = False
+        mock_ingest.query_recommendations.return_value = (mock_query_song, [mock_rec_song])
+
+        with (
+            patch("app.api.v1.songs.DAILY_LIMIT_BYPASS", True),
+            patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
+        ):
+            resp = client.get(RECS_URL, cookies={"session": valid_session})
+
+        assert resp.status_code == 200
+        assert resp.json()["locked_for_today"] is False
+        mock_ingest.query_recommendations.assert_called_once()
 
     def test_multiple_recommendations_returned(self, client, valid_session, mock_user, mock_ingest, mock_query_song):
         recs = []

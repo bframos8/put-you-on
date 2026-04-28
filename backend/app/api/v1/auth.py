@@ -1,6 +1,7 @@
 import os
 import time
-from fastapi import APIRouter, Depends, HTTPException, Request
+import traceback
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -44,7 +45,9 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
         token_data = await auth_service.exchange_code(code)
         profile = await auth_service.get_spotify_profile(token_data["access_token"])
         user = await auth_service.upsert_user(db, token_data, profile)
-    except Exception:
+    except Exception as e:
+        print(f"ERROR Spotify callback failed: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
         return RedirectResponse(url=f"{frontend_url}?error=auth_failed")
 
     response = RedirectResponse(url=frontend_url)
@@ -53,7 +56,7 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
         value=create_session(user.id),
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite="lax",
         max_age=60 * 60 * 24 * 30,
     )
     return response
@@ -65,9 +68,9 @@ async def me(request: Request, user: User = Depends(get_current_user)):
     return {"display_name": user.display_name, "email": user.email}
 
 
-@router.get("/logout")
+@router.post("/logout")
 @limiter.limit("10/minute", key_func=session_key)
 async def logout(request: Request):
-    response = RedirectResponse(url=get_frontend_url())
-    response.delete_cookie("session")
+    response = Response(status_code=204)
+    response.delete_cookie("session", secure=True, samesite="lax")
     return response

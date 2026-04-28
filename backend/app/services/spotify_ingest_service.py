@@ -4,14 +4,16 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Request
-from sqlalchemy import func, case
+from sqlalchemy import func, case, or_
 
 import essentia
 import numpy as np
 from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs
 from sqlalchemy.orm import Session
 
+from ..core.daily import today_pst
 from ..db.models import Album, Song, User, UserRecommendation, UserTopSong
+from .audio_genre_classifier import AudioGenreClassifier
 
 essentia.log.warningActive = False
 
@@ -26,11 +28,13 @@ class SpotifyIngestService:
         self.model = TensorflowPredictEffnetDiscogs(
             graphFilename=str(GRAPH_FILE), output="PartitionedCall:1"
         )
+        self.genre_classifier = AudioGenreClassifier()
 
     def ingest(self, spotify_url: str, db: Session) -> Song:
         audio_path = self._download(spotify_url)
         try:
-            embedding = self._embed(audio_path)
+            audio = self._load_audio(audio_path)
+            embedding = self._embed(audio)
             song = self._write_to_db(audio_path, embedding, db)
         finally:
             self._cleanup(audio_path)
@@ -54,10 +58,12 @@ class SpotifyIngestService:
             raise FileNotFoundError(f"spotdl produced no audio file for {spotify_url}")
         return new_files[0]
 
-    def _embed(self, audio_path: Path) -> np.ndarray:
-        audio = MonoLoader(
+    def _load_audio(self, audio_path: Path) -> np.ndarray:
+        return MonoLoader(
             filename=str(audio_path), sampleRate=16000, resampleQuality=4
         )()
+
+    def _embed(self, audio: np.ndarray) -> np.ndarray:
         frame_embeddings = self.model(audio)
         return frame_embeddings.mean(axis=0)
 
@@ -76,13 +82,7 @@ class SpotifyIngestService:
         if audio_path.exists():
             os.remove(audio_path)
 
-    def add_user_top_songs(
-        self,
-        tracks: list[dict],
-        user: User,
-        db: Session,
-        genre_map: dict[str, str | None] | None = None,
-    ) -> None:
+    def add_user_top_songs(self, tracks: list[dict], user: User, db: Session) -> None:
         db.query(UserTopSong).filter(UserTopSong.user_id == user.id).delete()
         snapshot_at = datetime.now()
         for track in tracks:
@@ -97,7 +97,7 @@ class SpotifyIngestService:
                 artist_name=track["artists"][0]["name"],
                 track_title=track["name"],
                 album_title=track["album"]["name"],
-                genre=genre_map.get(spotify_track_id) if genre_map else None,
+                genre=song.genre if song else None,
                 snapshot_at=snapshot_at,
             ))
         db.commit()
@@ -105,13 +105,19 @@ class SpotifyIngestService:
     def process_top_tracks(self, user: User, db: Session) -> None:
         unprocessed = (
             db.query(UserTopSong)
-            .filter(UserTopSong.user_id == user.id, UserTopSong.song_id == None)
+            .filter(
+                UserTopSong.user_id == user.id,
+                or_(UserTopSong.song_id == None, UserTopSong.genre == None),
+            )
             .all()
         )
         for top_song in unprocessed:
             existing = db.query(Song).filter(Song.spotify_track_id == top_song.spotify_track_id).first()
-            if existing:
+
+            # Fast path: an existing Song already carries a genre — reuse it.
+            if existing and existing.genre:
                 top_song.song_id = existing.id
+                top_song.genre = existing.genre
                 db.commit()
                 continue
 
@@ -124,19 +130,27 @@ class SpotifyIngestService:
 
             print(f"Downloaded to: {audio_path}")
             try:
-                embedding = self._embed(audio_path)
-                song = Song(
-                    title=top_song.track_title,
-                    artist_name=top_song.artist_name,
-                    album_title=top_song.album_title,
-                    spotify_track_id=top_song.spotify_track_id,
-                    genre=top_song.genre,
-                    embedding=embedding.tolist(),
-                    is_candidate=False,
-                )
-                db.add(song)
-                db.flush()
-                top_song.song_id = song.id
+                audio = self._load_audio(audio_path)
+                genre = self.genre_classifier.classify(audio)
+                top_song.genre = genre
+
+                if existing:
+                    top_song.song_id = existing.id
+                    existing.genre = genre
+                else:
+                    embedding = self._embed(audio)
+                    song = Song(
+                        title=top_song.track_title,
+                        artist_name=top_song.artist_name,
+                        album_title=top_song.album_title,
+                        spotify_track_id=top_song.spotify_track_id,
+                        genre=genre,
+                        embedding=embedding.tolist(),
+                        is_candidate=False,
+                    )
+                    db.add(song)
+                    db.flush()
+                    top_song.song_id = song.id
                 db.commit()
             except Exception as e:
                 db.rollback()
@@ -168,7 +182,7 @@ class SpotifyIngestService:
             .first()
         )
         query_song = query_entry.song
-        spotify_genre = query_entry.genre  # genre sourced from Spotify via UserTopSong
+        query_genre = query_entry.genre
         query_entry.used_as_query = True
 
         already_recommended = (
@@ -185,14 +199,14 @@ class SpotifyIngestService:
             .order_by(Song.embedding.cosine_distance(query_song.embedding))
         )
 
-        # Filter candidates by album genre matching the Spotify song's genre.
+        # Filter candidates by album genre matching the query song's genre.
         # Candidate genre is derived from the album they belong to (Album.genre).
         results = []
-        if spotify_genre:
+        if query_genre:
             results = (
                 base_query
                 .join(Song.album)
-                .filter(Album.genre == spotify_genre)
+                .filter(Album.genre == query_genre)
                 .limit(limit)
                 .all()
             )
@@ -200,11 +214,31 @@ class SpotifyIngestService:
         if len(results) < limit:
             results = base_query.limit(limit).all()
 
+        dispatch_date = today_pst()
         for song in results:
-            db.add(UserRecommendation(user_id=user.id, song_id=song.id))
+            db.add(UserRecommendation(
+                user_id=user.id,
+                song_id=song.id,
+                query_song_id=query_song.id,
+                dispatch_date=dispatch_date,
+            ))
         db.commit()
 
         return query_song, results
+
+    def get_todays_dispatch(self, user: User, db: Session):
+        rows = (
+            db.query(UserRecommendation)
+            .filter(
+                UserRecommendation.user_id == user.id,
+                UserRecommendation.dispatch_date == today_pst(),
+            )
+            .order_by(UserRecommendation.id.asc())
+            .all()
+        )
+        if not rows:
+            return None
+        return rows[0].query_song, [r.song for r in rows]
 
 
 def get_ingest_service(request: Request) -> SpotifyIngestService:

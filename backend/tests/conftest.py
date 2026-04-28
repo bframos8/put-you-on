@@ -140,10 +140,13 @@ def mock_db(mock_user):
     """
     Mock SQLAlchemy Session.
     Default: any query().filter().first() returns mock_user.
-    Individual tests may override this (e.g. set .first.return_value = None).
+    Also supports the FOR UPDATE lock acquired by the recs endpoint:
+        db.query(User).filter(...).with_for_update().one() -> mock_user
+    Individual tests may override these (e.g. set .first.return_value = None).
     """
     db = MagicMock(spec=Session)
     db.query.return_value.filter.return_value.first.return_value = mock_user
+    db.query.return_value.filter.return_value.with_for_update.return_value.one.return_value = mock_user
     return db
 
 
@@ -153,6 +156,7 @@ def mock_db(mock_user):
 def mock_ingest(mock_query_song, mock_rec_song):
     svc = MagicMock()
     svc.snapshot_is_stale.return_value = False
+    svc.get_todays_dispatch.return_value = None
     svc.query_recommendations.return_value = (mock_query_song, [mock_rec_song])
     return svc
 
