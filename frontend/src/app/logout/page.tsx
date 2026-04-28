@@ -18,6 +18,11 @@ export default function LogoutPage() {
   const [state, setState] = useState<State>("signing_off");
 
   useEffect(() => {
+    try {
+      window.localStorage.removeItem("pyo:recs");
+    } catch {
+      // ignore
+    }
     const controller = new AbortController();
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`, {
       method: "POST",

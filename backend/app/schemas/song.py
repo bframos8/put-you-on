@@ -7,6 +7,8 @@ class RecsResponse(BaseModel):
     query_title: str | None = None
     query_artist: str | None = None
     recommendations: list["SongResponse"] = []
+    locked_for_today: bool = False
+    next_dispatch_at: str | None = None
 
 
 class SongResponse(BaseModel):

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from .core.daily import DAILY_LIMIT_BYPASS
 from .db.database import engine
 from .db.models import Base
 from .services.spotify_ingest_service import SpotifyIngestService
@@ -23,6 +24,11 @@ async def lifespan(app: FastAPI):
     app.state.ingest_service = SpotifyIngestService()
     app.state.oauth_states = {}
     app.state.processing_users = set()
+    if DAILY_LIMIT_BYPASS:
+        print(
+            "WARNING: DAILY_LIMIT_BYPASS=true — daily dispatch limit is DISABLED. Do not enable in production.",
+            flush=True,
+        )
     yield
     engine.dispose()
 

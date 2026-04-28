@@ -260,6 +260,51 @@ class TestSongRecsEdgeCases:
 
         mock_tracks.assert_called_once_with("brand_new_access_token")
 
+    def test_newly_generated_dispatch_is_locked_for_today(
+        self, client, valid_session, mock_user, mock_ingest, mock_query_song, mock_rec_song
+    ):
+        mock_ingest.snapshot_is_stale.return_value = False
+        mock_ingest.get_todays_dispatch.return_value = None
+        mock_ingest.query_recommendations.return_value = (mock_query_song, [mock_rec_song])
+
+        with patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)):
+            resp = client.get(RECS_URL, cookies={"session": valid_session})
+
+        data = resp.json()
+        assert data["locked_for_today"] is True
+        assert data["next_dispatch_at"] is not None
+
+    def test_existing_dispatch_short_circuits_generation(
+        self, client, valid_session, mock_user, mock_ingest, mock_query_song, mock_rec_song
+    ):
+        """If today's batch already exists, we must not call query_recommendations."""
+        mock_ingest.get_todays_dispatch.return_value = (mock_query_song, [mock_rec_song])
+
+        with patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)):
+            resp = client.get(RECS_URL, cookies={"session": valid_session})
+
+        assert resp.status_code == 200
+        assert resp.json()["locked_for_today"] is True
+        mock_ingest.query_recommendations.assert_not_called()
+
+    def test_bypass_flag_skips_todays_dispatch_check(
+        self, client, valid_session, mock_user, mock_ingest, mock_query_song, mock_rec_song
+    ):
+        """With DAILY_LIMIT_BYPASS enabled, existing batches are ignored and a new one is generated."""
+        mock_ingest.get_todays_dispatch.return_value = (mock_query_song, [mock_rec_song])
+        mock_ingest.snapshot_is_stale.return_value = False
+        mock_ingest.query_recommendations.return_value = (mock_query_song, [mock_rec_song])
+
+        with (
+            patch("app.api.v1.songs.DAILY_LIMIT_BYPASS", True),
+            patch("app.api.v1.songs.auth_service.refresh_tokens", new=AsyncMock(return_value=mock_user)),
+        ):
+            resp = client.get(RECS_URL, cookies={"session": valid_session})
+
+        assert resp.status_code == 200
+        assert resp.json()["locked_for_today"] is False
+        mock_ingest.query_recommendations.assert_called_once()
+
     def test_multiple_recommendations_returned(self, client, valid_session, mock_user, mock_ingest, mock_query_song):
         recs = []
         for i in range(5):

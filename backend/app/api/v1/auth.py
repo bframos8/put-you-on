@@ -1,5 +1,6 @@
 import os
 import time
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -44,7 +45,9 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
         token_data = await auth_service.exchange_code(code)
         profile = await auth_service.get_spotify_profile(token_data["access_token"])
         user = await auth_service.upsert_user(db, token_data, profile)
-    except Exception:
+    except Exception as e:
+        print(f"ERROR Spotify callback failed: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
         return RedirectResponse(url=f"{frontend_url}?error=auth_failed")
 
     response = RedirectResponse(url=frontend_url)

@@ -11,6 +11,7 @@ import numpy as np
 from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs
 from sqlalchemy.orm import Session
 
+from ..core.daily import today_pst
 from ..db.models import Album, Song, User, UserRecommendation, UserTopSong
 from .audio_genre_classifier import AudioGenreClassifier
 
@@ -213,11 +214,31 @@ class SpotifyIngestService:
         if len(results) < limit:
             results = base_query.limit(limit).all()
 
+        dispatch_date = today_pst()
         for song in results:
-            db.add(UserRecommendation(user_id=user.id, song_id=song.id))
+            db.add(UserRecommendation(
+                user_id=user.id,
+                song_id=song.id,
+                query_song_id=query_song.id,
+                dispatch_date=dispatch_date,
+            ))
         db.commit()
 
         return query_song, results
+
+    def get_todays_dispatch(self, user: User, db: Session):
+        rows = (
+            db.query(UserRecommendation)
+            .filter(
+                UserRecommendation.user_id == user.id,
+                UserRecommendation.dispatch_date == today_pst(),
+            )
+            .order_by(UserRecommendation.id.asc())
+            .all()
+        )
+        if not rows:
+            return None
+        return rows[0].query_song, [r.song for r in rows]
 
 
 def get_ingest_service(request: Request) -> SpotifyIngestService:

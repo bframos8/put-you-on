@@ -22,24 +22,65 @@ type RecsResponse = {
   query_title: string | null;
   query_artist: string | null;
   recommendations: Song[];
+  locked_for_today: boolean;
+  next_dispatch_at: string | null;
 };
+
+const DISPATCH_CACHE_KEY = "pyo:recs";
+
+function readCachedDispatch(): RecsResponse | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(DISPATCH_CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as RecsResponse;
+    if (!data.next_dispatch_at) return null;
+    if (new Date(data.next_dispatch_at).getTime() <= Date.now()) {
+      window.localStorage.removeItem(DISPATCH_CACHE_KEY);
+      return null;
+    }
+    return data;
+  } catch {
+    window.localStorage.removeItem(DISPATCH_CACHE_KEY);
+    return null;
+  }
+}
+
+function writeCachedDispatch(data: RecsResponse) {
+  if (typeof window === "undefined") return;
+  if (data.status !== "ready" || !data.locked_for_today) return;
+  try {
+    window.localStorage.setItem(DISPATCH_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // localStorage unavailable (private mode / quota) — silently skip
+  }
+}
 
 function RefreshButton({
   retryIn,
+  lockedForToday,
   onRefresh,
 }: {
   retryIn: number | null;
+  lockedForToday: boolean;
   onRefresh: () => void;
 }) {
   const isRateLimited = retryIn !== null && retryIn > 0;
+  const disabled = lockedForToday || isRateLimited;
+
+  const label = lockedForToday
+    ? "Tomorrow · 12:00 AM PST"
+    : isRateLimited
+    ? `Refresh in ${retryIn}s`
+    : "Pull a new dispatch";
 
   return (
     <button
-      disabled={isRateLimited}
-      onClick={() => !isRateLimited && onRefresh()}
+      disabled={disabled}
+      onClick={() => !disabled && onRefresh()}
       className={
         "group inline-flex items-center gap-3 border border-[color:var(--ink)] px-5 py-3 font-display text-lg transition-colors " +
-        (isRateLimited
+        (disabled
           ? "opacity-40 cursor-not-allowed"
           : "hover:bg-[color:var(--acid)]")
       }
@@ -48,9 +89,7 @@ function RefreshButton({
         size={16}
         className="transition-transform duration-500 group-hover:rotate-180"
       />
-      <span>
-        {isRateLimited ? `Refresh in ${retryIn}s` : "Pull a new dispatch"}
-      </span>
+      <span>{label}</span>
     </button>
   );
 }
@@ -91,6 +130,7 @@ export function SongRecCarousel() {
     } else {
       setProcessing(false);
       setRecs(data);
+      writeCachedDispatch(data);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -112,7 +152,12 @@ export function SongRecCarousel() {
   }, [stopPolling, fetchRecs]);
 
   useEffect(() => {
-    fetchRecs();
+    const cached = readCachedDispatch();
+    if (cached) {
+      setRecs(cached);
+    } else {
+      fetchRecs();
+    }
     return () => stopPolling();
   }, [fetchRecs, stopPolling]);
 
@@ -157,7 +202,11 @@ export function SongRecCarousel() {
           Come back tomorrow for a fresh issue.
         </p>
         <div className="mt-6">
-          <RefreshButton retryIn={retryIn} onRefresh={fetchRecs} />
+          <RefreshButton
+            retryIn={retryIn}
+            lockedForToday={recs?.locked_for_today ?? false}
+            onRefresh={fetchRecs}
+          />
         </div>
       </div>
     );
@@ -316,7 +365,11 @@ export function SongRecCarousel() {
             <p className="label text-[color:var(--mist)]">
               ↳ the next dispatch arrives tomorrow
             </p>
-            <RefreshButton retryIn={retryIn} onRefresh={fetchRecs} />
+            <RefreshButton
+              retryIn={retryIn}
+              lockedForToday={recs?.locked_for_today ?? false}
+              onRefresh={fetchRecs}
+            />
           </div>
         </div>
       </div>
