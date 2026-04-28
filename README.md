@@ -21,7 +21,9 @@ Tech Stack for active web application:
 
 - Database: Deployed relational database via PostgreSQL 16.13 with PGVector extension. Utilizes enums for restricting entries. Uses indexing and relations for quick recommendations via vector search. Hosted on AWS Relational Database Service (RDS). 
 
-- DevOps: Git Actions automatically runs test suites on a PR. If tests pass and after manual check, new version is deployed via Docker and Docker compose onto AWS EC2 instance. 
+- DevOps: Github Actions automatically runs test suites on a PR. If tests pass and after manual check, new version is deployed via Docker and Docker compose onto AWS EC2 instance. 
+
+- Security: All secrets are kept in .env files for local development and in Github Secrets for production. 
 
 
 Data pipeline for database populating: 
@@ -37,7 +39,8 @@ Data pipeline for database populating:
     - Audio files are deleted to save memory and adhere to standard policies. 
     - Embedding and audio metadata is inserted into songs table in database. 
 
-
+AI tools:
+- Claude is my tool of choice. I use skills for consistent code generation and direction(/frontend-design and /feature-dev). I also have a claude.md file for local use to save my personal preferences in development. 
 
 # Project Steps
 Development Phase 1: 
