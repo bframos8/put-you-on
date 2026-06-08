@@ -6,11 +6,11 @@ import { Disc3, ArrowRight } from "lucide-react";
 type State = "signing_off" | "signed_off" | "error";
 
 const SIGN_OFF_ITEMS = [
-  "END OF TRANSMISSION",
-  "SIDE B — SIGN OFF",
+  "CATCH YOU LATER",
+  "TAPE PARKED",
   "GOODNIGHT, LISTENER",
-  "STATIC · STATIC · STATIC",
-  "NO ALGORITHMS, JUST TASTE",
+  "COME BACK TOMORROW",
+  "NO ALGORITHM SLOP",
   "PYO / 2026",
 ];
 
@@ -43,16 +43,11 @@ export default function LogoutPage() {
     return (
       <div className="relative min-h-screen pt-20 flex items-center justify-center px-6">
         <div className="flex flex-col items-start text-left max-w-2xl w-full">
-          <Disc3 size={52} className="reel" />
-          <span className="label mt-6 text-[color:var(--mist)]">
-            § SIGNING OFF
-          </span>
-          <p className="font-display text-5xl md:text-6xl leading-[0.95] mt-3">
-            Cutting the{" "}
-            <span className="font-display-soft">transmission…</span>
-          </p>
-          <p className="font-mono text-sm text-[color:var(--mist)] mt-4">
-            Rewinding your tape. One moment.
+          <Disc3 size={52} strokeWidth={1.5} className="reel text-[color:var(--lime)]" />
+          <span className="label mt-6 text-white/50">◖ BOUNCING…</span>
+          <p className="tag text-5xl md:text-6xl mt-4">PEACE.</p>
+          <p className="font-body text-[0.95rem] text-white/60 mt-4">
+            Clearing your session. One sec.
           </p>
         </div>
       </div>
@@ -60,16 +55,16 @@ export default function LogoutPage() {
   }
 
   return (
-    <div className="relative min-h-screen pt-20">
+    <div className="relative min-h-screen pt-16 overflow-hidden">
       {/* ─── Marquee ─── */}
-      <div className="border-y border-[color:var(--line)] bg-[color:var(--ink)] text-[color:var(--paper)] overflow-hidden">
+      <div className="border-y-2 border-white bg-[color:var(--violet)] text-white overflow-hidden">
         <div className="marquee py-2">
-          <div className="marquee-track label">
+          <div className="marquee-track label text-[0.78rem]">
             {Array.from({ length: 4 }).flatMap((_, g) =>
               SIGN_OFF_ITEMS.map((m, i) => (
-                <span key={`${g}-${i}`} className="inline-flex items-center gap-8">
+                <span key={`${g}-${i}`} className="inline-flex items-center gap-6">
                   <span>{m}</span>
-                  <span aria-hidden className="text-[color:var(--acid)]">✺</span>
+                  <span aria-hidden className="text-[color:var(--lime)]">✺</span>
                 </span>
               ))
             )}
@@ -77,45 +72,32 @@ export default function LogoutPage() {
         </div>
       </div>
 
-      {/* ─── Masthead plate ─── */}
-      <section className="mx-auto max-w-[1480px] px-6 md:px-10 pt-10 md:pt-14">
-        <div className="flex flex-wrap items-end justify-between gap-6 pb-6 border-b-2 border-[color:var(--ink)]">
-          <div className="label num flex flex-wrap gap-x-8 gap-y-1 text-[color:var(--mist)]">
-            <span>SIDE / B</span>
-            <span>CUT / FINAL</span>
+      {/* ─── Hero ─── */}
+      <section className="mx-auto max-w-[1480px] px-5 md:px-10 pt-10 md:pt-14">
+        <div className="flex flex-wrap items-end justify-between gap-6 pb-6 border-b-2 border-white">
+          <div className="label num flex flex-wrap gap-x-8 gap-y-1 text-white/45">
+            <span>STATUS / SIGNED OUT</span>
             <span>
-              DATE /{" "}
-              {new Date().toISOString().slice(0, 10).replace(/-/g, ".")}
+              DATE / {new Date().toISOString().slice(0, 10).replace(/-/g, ".")}
             </span>
           </div>
-          <span className="label">A FAREWELL DISPATCH</span>
+          <span className="label text-white">A FAREWELL</span>
         </div>
 
-        {/* ─── Hero type ─── */}
         <div className="grid grid-cols-12 gap-4 md:gap-6 pt-10 md:pt-14 pb-6">
           <div className="col-span-12 lg:col-span-9">
-            <h1 className="font-display text-[clamp(3.4rem,13vw,11rem)] leading-[0.84]">
+            <h1 className="leading-[0.84]">
               <span
-                className="block rise"
+                className="block tag text-[clamp(3rem,12vw,10rem)] stamp"
                 style={{ animationDelay: "0.05s" }}
               >
-                {state === "error" ? (
-                  <>
-                    We&rsquo;ll try the{" "}
-                    <span className="font-display-soft">next</span>
-                  </>
-                ) : (
-                  <>
-                    Until the <span className="font-display-soft">next</span>
-                  </>
-                )}
+                {state === "error" ? "ALMOST." : "CATCH YOU"}
               </span>
               <span
-                className="block rise"
+                className="block display text-[clamp(3rem,12vw,10rem)] text-[color:var(--lime)] stamp"
                 style={{ animationDelay: "0.2s" }}
               >
-                dispatch,{" "}
-                <span className="acid-underline">friend.</span>
+                {state === "error" ? "try again." : "tomorrow."}
               </span>
             </h1>
           </div>
@@ -125,75 +107,60 @@ export default function LogoutPage() {
             style={{ animationDelay: "0.55s" }}
           >
             <div className="flex flex-col gap-5">
-              <span className="label">— FROM THE EDITORS</span>
-              <p className="font-display text-[1.25rem] leading-[1.25] -tracking-[0.01em]">
+              <span className="label text-white/50">— FROM YOUR PLUG</span>
+              <p className="font-body text-[1.05rem] leading-relaxed text-white">
                 {state === "error" ? (
                   <>
-                    Something caught in the reels on the way out. Your session
-                    may still be live — try again in a moment.
+                    Something caught on the way out. Your session may still be
+                    live — try again in a moment.
                   </>
                 ) : (
                   <>
-                    Your session has been{" "}
-                    <span className="font-display-soft">cut</span>. Come
-                    back when you want the next issue.
+                    Your session is{" "}
+                    <span className="ink-lime font-semibold">cleared</span>. Come
+                    back when you want the next batch.
                   </>
                 )}
               </p>
-              <div
-                className="rule rule-animate"
-                style={{ animationDelay: "0.9s" }}
-              />
-              <p className="font-mono text-[0.78rem] leading-relaxed text-[color:var(--mist)]">
+              <div className="rule-signal rule-animate" style={{ animationDelay: "0.9s" }} />
+              <p className="font-body text-[0.88rem] leading-relaxed text-white/55">
                 No trackers follow you out the door. Promise.
               </p>
             </div>
           </aside>
         </div>
 
-        {/* ─── Sign-off row ─── */}
+        {/* ─── Return row ─── */}
         <div
-          className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8 pt-6 pb-14 border-t border-[color:var(--line)] rise"
+          className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8 pt-6 pb-14 border-t-2 border-white rise"
           style={{ animationDelay: "0.75s" }}
         >
-          <div className="flex items-center gap-5">
-            <span className="label num text-[color:var(--mist)]">[ END ]</span>
-            <a
-              href="/"
-              className="group relative inline-flex items-center gap-4 bg-[color:var(--ink)] px-7 py-5 text-[color:var(--paper)] transition-transform duration-300 hover:-translate-y-[3px]"
-            >
-              <span
-                aria-hidden
-                className="absolute inset-0 -z-[1] translate-x-[6px] translate-y-[6px] bg-[color:var(--acid)] transition-transform duration-300 group-hover:translate-x-[10px] group-hover:translate-y-[10px]"
-              />
-              <span className="label num opacity-70">[ RETURN ]</span>
-              <span className="font-display text-2xl leading-none tracking-tight">
-                Back to the masthead
-              </span>
-              <ArrowRight
-                size={22}
-                className="transition-transform duration-300 group-hover:translate-x-1"
-              />
-            </a>
-          </div>
-          <div className="flex items-center gap-3 label text-[color:var(--mist)]">
+          <a
+            href="/"
+            className="group relative inline-flex items-center gap-3 bg-[color:var(--lime)] px-7 py-4 text-black transition-transform duration-300 hover:-translate-x-[3px] hover:-translate-y-[3px]"
+          >
             <span
               aria-hidden
-              className="inline-block h-[9px] w-[9px] rounded-full bg-[color:var(--acid)] blink-dot border border-[color:var(--ink)]"
+              className="absolute inset-0 -z-[1] translate-x-[7px] translate-y-[7px] bg-[color:var(--violet)] transition-transform duration-300 group-hover:translate-x-[11px] group-hover:translate-y-[11px]"
             />
-            <span>SIGNAL RELEASED — TAPE PARKED</span>
+            <span className="label text-black/55">[ HOME ]</span>
+            <span className="display text-2xl leading-none">Back to the wall</span>
+            <ArrowRight size={22} strokeWidth={2.5} className="transition-transform duration-300 group-hover:translate-x-1" />
+          </a>
+          <div className="flex items-center gap-3 label text-white/55">
+            <span aria-hidden className="inline-block h-[10px] w-[10px] rounded-full bg-[color:var(--lime)] blink-dot" />
+            <span>SESSION RELEASED</span>
           </div>
         </div>
       </section>
 
-      {/* ─── Vanity footer type ─── */}
-      <section className="border-t-2 border-[color:var(--ink)] overflow-hidden">
+      {/* ─── Vanity footer ─── */}
+      <section className="border-t-2 border-white overflow-hidden bg-black">
         <div
-          className="font-display leading-none text-[clamp(6rem,22vw,20rem)] tracking-[-0.06em] whitespace-nowrap text-center py-3"
+          className="tag-flat leading-none text-[clamp(5rem,22vw,18rem)] whitespace-nowrap text-center py-3 text-white/10"
           aria-hidden
         >
-          goodnight{" "}
-          <span className="font-display-soft">/ listener</span>
+          GOODNIGHT
         </div>
       </section>
     </div>

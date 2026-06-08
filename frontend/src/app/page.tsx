@@ -1,124 +1,143 @@
 import { SpotifyLoginButton } from "@/components/spotify-login-button";
-import { ArrowDown } from "lucide-react";
 
 const MARQUEE_ITEMS = [
-  "VOL. 07",
-  "DISPATCH N° 0412",
-  "EST. 2025",
-  "SIDE A",
-  "LATE NIGHT EDITORIAL",
-  "NO ALGORITHMS, JUST TASTE",
-  "CURATED IN TRANSIT",
-  "HEADPHONES RECOMMENDED",
+  "NO ALGORITHM SLOP",
+  "10 SONGS A DAY",
+  "STRAIGHT OFF YOUR TASTE",
+  "NO INFINITE SCROLL",
+  "PUT YOU ON",
+  "FRESH PRESS DAILY",
+  "HEADPHONES ON",
+  "EST. 2026",
 ];
 
-const PROMISES = [
+const STEPS = [
   {
     n: "01",
+    kicker: "YOU PLAY",
     title: "You listen.",
     body:
-      "We pull your top tracks from Spotify — the ones on heavy rotation, the ones you can't stop playing.",
+      "We grab your heavy-rotation tracks off Spotify — the ones you can't stop replaying. That's the seed.",
+    accent: "lime",
   },
   {
     n: "02",
-    title: "We listen back.",
+    kicker: "WE DIG",
+    title: "We dig.",
     body:
-      "Audio embeddings, nearest-neighbor search, and a little editorial taste — we pick songs that share the feeling, not just the genre tag.",
+      "Audio embeddings, nearest-neighbor search, a little taste. We pull songs that share the feeling, not just the genre tag.",
+    accent: "violet",
   },
   {
     n: "03",
+    kicker: "YOU GET ON",
     title: "You get put on.",
     body:
-      "Ten recommendations, delivered daily. No feed. No infinite scroll. A dispatch, not a doom loop.",
+      "Ten songs, dropped daily. No feed. No doom loop. A plug, not a algorithm.",
+    accent: "pink",
   },
+] as const;
+
+const SAMPLE = [
+  { t: "Sideways", a: "Citizen", d: "3:28" },
+  { t: "Comme des Garçons", a: "Rina Sawayama", d: "2:58" },
+  { t: "Green Aphrodisiac", a: "Corinne Bailey Rae", d: "3:57" },
+  { t: "Anthems for a Seventeen Year-Old Girl", a: "Broken Social Scene", d: "4:25" },
+  { t: "Ivy", a: "Frank Ocean", d: "4:09" },
+  { t: "Morning Dew", a: "Devendra Banhart", d: "2:45" },
 ];
 
-const MASTHEAD_NUMBERS = [
-  { k: "ISSUE", v: "N° 0412" },
-  { k: "SIDE", v: "A" },
-  { k: "TEMPO", v: "118 BPM" },
-  { k: "SIGNAL", v: "FM 98.7" },
-];
+const accentClass = {
+  lime: "ink-lime",
+  violet: "ink-violet",
+  pink: "ink-pink",
+} as const;
+
+const posterClass = {
+  lime: "poster-lime",
+  violet: "poster-violet",
+  pink: "poster-pink",
+} as const;
 
 export default function Home() {
   return (
-    <div className="relative min-h-screen pt-20">
+    <div className="relative min-h-screen pt-16 overflow-hidden">
       {/* ─── Top marquee ─── */}
-      <div className="border-y border-[color:var(--line)] bg-[color:var(--paper)] overflow-hidden">
+      <div className="border-y-2 border-white bg-[color:var(--lime)] text-black overflow-hidden">
         <div className="marquee py-2">
-          <div className="marquee-track label">
+          <div className="marquee-track label text-[0.78rem]">
             {[...MARQUEE_ITEMS, ...MARQUEE_ITEMS, ...MARQUEE_ITEMS].map((m, i) => (
-              <span key={i} className="inline-flex items-center gap-8">
+              <span key={i} className="inline-flex items-center gap-6">
                 <span>{m}</span>
-                <span aria-hidden className="opacity-40">✺</span>
+                <span aria-hidden>✺</span>
               </span>
             ))}
           </div>
         </div>
       </div>
 
-      {/* ─── Hero masthead ─── */}
-      <section className="relative mx-auto max-w-[1480px] px-6 md:px-10 pt-10 md:pt-14">
-        {/* masthead metadata row */}
-        <div className="flex flex-wrap items-end justify-between gap-6 pb-6 border-b-2 border-[color:var(--ink)]">
-          <div className="label num flex flex-wrap gap-x-8 gap-y-1">
-            {MASTHEAD_NUMBERS.map((m) => (
-              <span key={m.k}>
-                <span className="opacity-55">{m.k} /</span>{" "}
-                <span>{m.v}</span>
-              </span>
-            ))}
-          </div>
-          <span className="label">A MUSIC DISPATCH · FRI / SAT / SUN</span>
-        </div>
+      {/* ─── Hero ─── */}
+      <section className="relative mx-auto max-w-[1480px] px-5 md:px-10 pt-12 md:pt-16 pb-10">
+        {/* halftone field behind the tag */}
+        <div
+          aria-hidden
+          className="halftone absolute inset-x-0 top-0 h-[70%] opacity-60 pointer-events-none"
+        />
 
-        {/* hero typographic moment */}
-        <div className="relative grid grid-cols-12 gap-4 md:gap-6 pt-10 md:pt-14 pb-6">
-          {/* hero type */}
-          <div className="col-span-12 lg:col-span-9">
-            <h1 className="font-display text-[clamp(3.6rem,14vw,12.5rem)] leading-[0.82]">
-              <span className="block rise" style={{ animationDelay: "0.05s" }}>
-                Put <span className="font-display-soft">you</span>
+        <div className="relative grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-8">
+            <span
+              className="label text-[color:var(--lime)] stamp inline-block"
+              style={{ animationDelay: "0.02s" }}
+            >
+              ◖ A MUSIC PLUG · DROPS DAILY
+            </span>
+
+            {/* the graffiti shout */}
+            <h1 className="mt-5 leading-[0.85]">
+              <span
+                className="block tag text-[clamp(3.2rem,13vw,11rem)] stamp"
+                style={{ animationDelay: "0.08s" }}
+              >
+                PUT YOU
               </span>
               <span
-                className="block rise pl-[0.06em]"
+                className="block tag-lime text-[clamp(3.2rem,13vw,11rem)] stamp"
                 style={{ animationDelay: "0.2s" }}
               >
-                on the songs
-              </span>
-              <span
-                className="block rise"
-                style={{ animationDelay: "0.35s" }}
-              >
-                <span className="acid-underline">you haven&rsquo;t</span>{" "}
-                <span className="font-display-soft">heard</span>
-              </span>
-              <span
-                className="block rise"
-                style={{ animationDelay: "0.5s" }}
-              >
-                <span className="font-display-soft">yet.</span>
+                ON.
               </span>
             </h1>
+
+            {/* refined accent line under the tag */}
+            <p
+              className="display text-[clamp(1.4rem,3.6vw,2.6rem)] mt-6 max-w-[18ch] text-white stamp"
+              style={{ animationDelay: "0.34s" }}
+            >
+              Songs you haven&rsquo;t heard{" "}
+              <span className="signal-mark-solid">yet.</span>
+            </p>
           </div>
 
-          {/* side pull-quote */}
+          {/* side note */}
           <aside
-            className="col-span-12 lg:col-span-3 lg:pt-12 fade"
-            style={{ animationDelay: "0.7s" }}
+            className="col-span-12 lg:col-span-4 lg:pt-24 fade"
+            style={{ animationDelay: "0.55s" }}
           >
-            <div className="flex flex-col gap-5">
-              <span className="label">{/* inline arrow */}— FROM THE EDITORS</span>
-              <p className="font-display text-[1.3rem] leading-[1.25] -tracking-[0.01em]">
-                A handpicked dispatch of music lifted straight from{" "}
-                <span className="font-display-soft">your own ear</span>.
-                Made by nearest-neighbor vectors and nights that went too long.
+            <div className="flex flex-col gap-4">
+              <span className="label text-white/50">— FROM YOUR PLUG</span>
+              <p className="font-body text-[1.05rem] leading-relaxed text-white">
+                A handful of tracks lifted straight off{" "}
+                <span className="ink-lime font-semibold">your own ear</span>.
+                Made by nearest-neighbor vectors and nights that ran too long.
               </p>
-              <div className="rule rule-animate" style={{ animationDelay: "1s" }} />
-              <p className="font-mono text-[0.78rem] leading-relaxed text-[color:var(--mist)]">
+              <div
+                className="rule-signal rule-animate"
+                style={{ animationDelay: "0.9s" }}
+              />
+              <p className="font-body text-[0.9rem] leading-relaxed text-white/55">
                 We don&rsquo;t care about your follower count. We care about
-                track&nbsp;04 of the album you&rsquo;ve been replaying. That&rsquo;s
-                the seed.
+                track 04 of the album you&rsquo;ve had on loop.
               </p>
             </div>
           </aside>
@@ -126,159 +145,142 @@ export default function Home() {
 
         {/* CTA row */}
         <div
-          className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8 pt-2 pb-14 border-t border-[color:var(--line)] rise"
-          style={{ animationDelay: "0.85s" }}
+          className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8 pt-10 mt-8 border-t-2 border-white rise"
+          style={{ animationDelay: "0.7s" }}
         >
-          <div className="flex items-center gap-5">
-            <span className="label num text-[color:var(--mist)]">[ 00:00 ]</span>
-            <SpotifyLoginButton />
-          </div>
-          <div className="flex items-center gap-3 label text-[color:var(--mist)]">
+          <SpotifyLoginButton />
+          <div className="flex items-center gap-3 label text-white/55">
             <span
               aria-hidden
-              className="inline-block h-[9px] w-[9px] rounded-full bg-[color:var(--acid)] blink-dot border border-[color:var(--ink)]"
+              className="inline-block h-[10px] w-[10px] rounded-full bg-[color:var(--lime)] blink-dot"
             />
-            <span>SIGNAL ACQUIRED — AWAITING HANDSHAKE</span>
+            <span>FREE · NO CARD · 30 SECONDS</span>
           </div>
         </div>
       </section>
 
-      {/* ─── How it works ─── */}
-      <section className="relative mx-auto max-w-[1480px] px-6 md:px-10 py-16 md:py-24">
-        <div className="grid grid-cols-12 gap-6 md:gap-10">
-          <div className="col-span-12 lg:col-span-3">
-            <div className="lg:sticky lg:top-32">
-              <span className="label">§ 01 — METHOD</span>
-              <h2 className="font-display text-5xl md:text-6xl leading-[0.9] mt-4">
-                How we{" "}
-                <span className="font-display-soft">hear</span> you.
-              </h2>
-              <div className="rule mt-6" />
-              <p className="font-mono text-[0.78rem] mt-4 text-[color:var(--mist)] leading-relaxed">
-                Three moves. No tricks. No sponsored placements. No &ldquo;popular
-                right now&rdquo;.
-              </p>
-            </div>
-          </div>
-
-          <ol className="col-span-12 lg:col-span-9 flex flex-col">
-            {PROMISES.map((p, i) => (
-              <li
-                key={p.n}
-                className="grid grid-cols-12 gap-4 md:gap-8 py-8 md:py-12 border-t border-[color:var(--line)] last:border-b group"
-              >
-                <div className="col-span-2 md:col-span-1 font-mono text-[color:var(--mist)]">
-                  <span className="num text-lg">{p.n}</span>
-                </div>
-                <h3 className="col-span-10 md:col-span-5 font-display text-3xl md:text-5xl leading-[0.92]">
-                  {p.title.split(" ").map((w, wi) => (
-                    <span
-                      key={wi}
-                      className={
-                        (i === 1 && wi === 0) || (i === 2 && wi === 2)
-                          ? "font-display-soft"
-                          : ""
-                      }
-                    >
-                      {w}{" "}
-                    </span>
-                  ))}
-                </h3>
-                <p className="col-span-12 md:col-span-6 font-mono text-[0.85rem] leading-[1.65] text-[color:var(--ink)]/80 md:mt-3">
-                  {p.body}
-                </p>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-
-      {/* ─── Sample tracklist aesthetic teaser ─── */}
-      <section className="relative mx-auto max-w-[1480px] px-6 md:px-10 pb-20">
-        <div className="flex items-end justify-between pb-4 border-b-2 border-[color:var(--ink)]">
-          <div>
-            <span className="label">§ 02 — SAMPLE DISPATCH</span>
-            <h2 className="font-display text-4xl md:text-6xl leading-[0.9] mt-3">
-              A page from{" "}
-              <span className="font-display-soft">last week&rsquo;s</span>{" "}
-              issue.
-            </h2>
-          </div>
-          <span className="label num hidden md:inline text-[color:var(--mist)]">
-            PP. 04 — 06
+      {/* ─── How it works: three pasted posters ─── */}
+      <section className="relative mx-auto max-w-[1480px] px-5 md:px-10 py-16 md:py-24">
+        <div className="flex items-end justify-between pb-6 border-b-2 border-white">
+          <h2 className="display text-4xl md:text-6xl text-white">
+            How we put you <span className="ink-lime">on.</span>
+          </h2>
+          <span className="label text-white/45 hidden md:inline">
+            3 MOVES · NO TRICKS
           </span>
         </div>
 
-        <ul className="mt-6">
-          {[
-            { t: "Sideways", a: "Citizen", d: "3:28" },
-            { t: "Comme des Garçons (Like the Boys)", a: "Rina Sawayama", d: "2:58" },
-            { t: "Green Aphrodisiac", a: "Corinne Bailey Rae", d: "3:57" },
-            { t: "Anthems for a Seventeen Year-Old Girl", a: "Broken Social Scene", d: "4:25" },
-            { t: "Ivy", a: "Frank Ocean", d: "4:09" },
-            { t: "Morning Dew", a: "Devendra Banhart", d: "2:45" },
-          ].map((s, i) => (
-            <li
-              key={i}
-              className="flex items-baseline border-b border-dashed border-[color:var(--line)] py-3 group"
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-7 pt-12">
+          {STEPS.map((s, i) => (
+            <article
+              key={s.n}
+              className={
+                "paste paste-hover relative p-7 pb-9 " + posterClass[s.accent]
+              }
+              style={{
+                transform: `rotate(${i === 1 ? "0.8deg" : i === 2 ? "-1deg" : "-0.4deg"})`,
+              }}
             >
-              <span className="num label w-10 text-[color:var(--mist)]">
-                {(i + 1).toString().padStart(2, "0")}
-              </span>
-              <span className="font-display text-xl md:text-2xl leading-tight">
-                {s.t}
-              </span>
-              <span className="dotted-leader" />
-              <span className="font-mono text-[0.8rem] text-[color:var(--mist)] hidden md:inline">
-                {s.a}
-              </span>
-              <span className="num label w-14 text-right">{s.d}</span>
-            </li>
+              <div className="flex items-baseline justify-between">
+                <span className="num display text-6xl text-black/15">{s.n}</span>
+                <span className="label text-black/45">{s.kicker}</span>
+              </div>
+              <h3 className="display text-4xl md:text-[2.6rem] mt-6 text-black">
+                {s.title.split(" ").map((w, wi) => (
+                  <span key={wi} className={wi === 0 ? accentClass[s.accent] : ""}>
+                    {w}{" "}
+                  </span>
+                ))}
+              </h3>
+              <p className="font-body text-[0.98rem] leading-relaxed text-black/75 mt-4">
+                {s.body}
+              </p>
+            </article>
           ))}
-        </ul>
+        </div>
+      </section>
 
-        <p className="label mt-6 text-[color:var(--mist)]">
-          ↳ your issue arrives tuned to your ear, not this one.
-        </p>
+      {/* ─── Sample wall ─── */}
+      <section className="relative border-y-2 border-white bg-[color:var(--violet)]">
+        <div className="mx-auto max-w-[1480px] px-5 md:px-10 py-16 md:py-20">
+          <div className="flex flex-wrap items-end justify-between gap-4 pb-5 border-b-2 border-white">
+            <div>
+              <span className="label text-white/70">A REAL DROP</span>
+              <h2 className="display text-4xl md:text-6xl mt-3 text-white">
+                Last week&rsquo;s{" "}
+                <span className="text-[color:var(--lime)]">set.</span>
+              </h2>
+            </div>
+            <span className="label text-white/60 hidden md:inline">
+              YOURS WILL SOUND LIKE YOU
+            </span>
+          </div>
+
+          <ul className="mt-2">
+            {SAMPLE.map((s, i) => (
+              <li
+                key={i}
+                className="flex items-baseline border-b border-white/25 py-3.5 group"
+              >
+                <span className="num label w-9 text-white/55">
+                  {(i + 1).toString().padStart(2, "0")}
+                </span>
+                <span className="display text-xl md:text-2xl text-white group-hover:text-[color:var(--lime)] transition-colors">
+                  {s.t}
+                </span>
+                <span className="dotted-leader" />
+                <span className="font-body text-[0.85rem] text-white/70 hidden md:inline">
+                  {s.a}
+                </span>
+                <span className="num label w-14 text-right text-white/70">
+                  {s.d}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </section>
 
       {/* ─── Final CTA ─── */}
-      <section className="relative border-y-2 border-[color:var(--ink)] bg-[color:var(--ink)] text-[color:var(--paper)] overflow-hidden">
-        <div className="mx-auto max-w-[1480px] px-6 md:px-10 py-20 md:py-28 grid grid-cols-12 gap-6 items-center">
+      <section className="relative bg-black overflow-hidden">
+        <div className="mx-auto max-w-[1480px] px-5 md:px-10 py-20 md:py-28 grid grid-cols-12 gap-8 items-center">
           <div className="col-span-12 md:col-span-8">
-            <span className="label text-[color:var(--acid)]">[ JOIN THE DISPATCH ]</span>
-            <h2 className="font-display text-[clamp(2.8rem,8vw,7rem)] leading-[0.88] mt-4">
-              Ten songs.{" "}
-              <span className="font-display-soft">Every day.</span>{" "}
-              <span className="acid-underline text-[color:var(--ink)]">
+            <span className="label text-[color:var(--lime)]">[ GET ON THE LIST ]</span>
+            <h2 className="mt-5 leading-[0.86]">
+              <span className="block display text-[clamp(2.6rem,9vw,7rem)] text-white">
+                Ten songs.
+              </span>
+              <span className="block tag text-[clamp(2.6rem,9vw,7rem)]">
+                EVERY DAY.
+              </span>
+              <span className="block display text-[clamp(2.6rem,9vw,7rem)] text-[color:var(--lime)]">
                 Yours.
               </span>
             </h2>
           </div>
           <div className="col-span-12 md:col-span-4 flex md:justify-end">
-            <SpotifyLoginButton className="bg-[color:var(--paper)] text-[color:var(--ink)]" />
+            <SpotifyLoginButton label="Plug me in" />
           </div>
         </div>
 
-        {/* oversize vanity type at bottom */}
-        <div className="overflow-hidden border-t border-[color:var(--paper)]/20">
+        {/* oversize vanity tag at the bottom */}
+        <div className="overflow-hidden border-t-2 border-white">
           <div
-            className="font-display leading-none text-[clamp(7rem,26vw,22rem)] tracking-[-0.06em] whitespace-nowrap text-center py-3"
+            className="tag-flat leading-none text-[clamp(5rem,24vw,20rem)] whitespace-nowrap text-center py-4 text-white/10"
             aria-hidden
           >
-            P · Y · O <span className="font-display-soft">/ 2026</span>
+            P·Y·O / 2026
           </div>
         </div>
       </section>
 
-      {/* ─── Colophon ─── */}
-      <footer className="mx-auto max-w-[1480px] px-6 md:px-10 py-10 grid grid-cols-12 gap-6">
-        <div className="col-span-12 md:col-span-6 label flex items-center gap-3">
-          <ArrowDown size={14} />
-          <span>Scroll set · Printed on the web · No trackers</span>
-        </div>
-        <div className="col-span-12 md:col-span-6 label text-right text-[color:var(--mist)]">
-          © PUT YOU ON — EDITORIAL, LTD.
+      {/* ─── Footer ─── */}
+      <footer className="border-t-2 border-white">
+        <div className="mx-auto max-w-[1480px] px-5 md:px-10 py-8 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+          <span className="label text-white/55">
+            ✺ MADE WITH EMBEDDINGS · NO TRACKERS
+          </span>
+          <span className="label text-white/35">© PUT YOU ON — 2026</span>
         </div>
       </footer>
     </div>

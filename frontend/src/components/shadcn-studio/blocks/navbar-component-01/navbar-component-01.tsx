@@ -8,12 +8,12 @@ import Logo from "@/components/shadcn-studio/logo";
 type AuthState = "unknown" | "authed" | "anon";
 
 const BASE_ITEMS = [
-  { title: "Dispatch", href: "/", num: "01" },
-  { title: "Profile", href: "/profile", num: "02" },
-  { title: "Queue", href: "/dashboard", num: "03" },
+  { title: "Home", href: "/", num: "01" },
+  { title: "Taste", href: "/profile", num: "02" },
+  { title: "Today", href: "/dashboard", num: "03" },
 ];
 
-const AUTHED_ITEM = { title: "Logout", href: "/logout", num: "04" };
+const AUTHED_ITEM = { title: "Bounce", href: "/logout", num: "04" };
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
@@ -58,51 +58,62 @@ const Navbar = () => {
     return [
       ...BASE_ITEMS,
       {
-        title: "Log in",
+        title: "Plug in",
         href: `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/spotify/login`,
         num: "04",
       },
     ];
   }, [auth]);
 
+  const isActive = (href: string) => href.startsWith("/") && pathname === href;
+
   return (
     <header className="fixed inset-x-0 top-0 z-[40]">
-      <div className="bg-[color:var(--paper)]/75 backdrop-blur-md border-b border-[color:var(--line)]">
-        <div className="mx-auto max-w-[1480px] px-6 md:px-10">
-          <div className="flex items-center justify-between gap-6 py-4">
-            <a href="/" className="shrink-0 hover-rule">
+      <div className="bg-black/85 backdrop-blur-md border-b-2 border-white/90">
+        <div className="mx-auto max-w-[1480px] px-5 md:px-10">
+          <div className="flex items-center justify-between gap-6 py-3.5">
+            <a href="/" className="shrink-0 wiggle-hover">
               <Logo />
             </a>
 
-            <nav className="hidden md:flex items-center gap-8">
+            <nav className="hidden md:flex items-center gap-7">
               {navItems.map((item) => (
                 <a
                   key={item.href}
                   href={item.href}
-                  className="group flex items-baseline gap-2 hover-rule"
+                  className="group flex items-baseline gap-2"
                 >
-                  <span className="num label opacity-50 group-hover:opacity-100 transition">
+                  <span className="num label text-[0.6rem] text-white/40 group-hover:text-[color:var(--lime)] transition-colors">
                     {item.num}
                   </span>
-                  <span className="font-display text-[1.05rem] tracking-tight">
+                  <span
+                    className={
+                      "spray-link display text-[1.15rem] transition-colors " +
+                      (isActive(item.href)
+                        ? "text-[color:var(--lime)]"
+                        : "text-white group-hover:text-white")
+                    }
+                  >
                     {item.title}
                   </span>
                 </a>
               ))}
             </nav>
 
-            <div className="hidden md:flex items-center gap-3 shrink-0">
+            <div className="hidden md:flex items-center gap-2.5 shrink-0">
               <span className="relative flex h-2 w-2 items-center">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-[color:var(--acid)] blink-dot" />
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[color:var(--lime)] blink-dot" />
               </span>
-              <span className="label num">ON AIR · {time || "00:00:00"}</span>
+              <span className="label text-[0.62rem] text-white/70">
+                10 a day · {time || "00:00:00"}
+              </span>
             </div>
 
             <button
               type="button"
               aria-label="Menu"
               onClick={() => setOpen((v) => !v)}
-              className="md:hidden size-10 border border-[color:var(--line)] flex items-center justify-center"
+              className="md:hidden size-10 border-2 border-white flex items-center justify-center text-white"
             >
               {open ? <X size={18} /> : <MenuIcon size={18} />}
             </button>
@@ -110,22 +121,29 @@ const Navbar = () => {
         </div>
 
         {open && (
-          <div className="md:hidden border-t border-[color:var(--line)]">
-            <ul className="mx-auto max-w-[1480px] px-6">
+          <div className="md:hidden border-t-2 border-white/90 bg-black">
+            <ul className="mx-auto max-w-[1480px] px-5">
               {navItems.map((item) => (
                 <li
                   key={item.href}
-                  className="border-b border-[color:var(--line)] last:border-none"
+                  className="border-b border-white/15 last:border-none"
                 >
                   <a
                     href={item.href}
                     className="flex items-baseline justify-between py-4"
                     onClick={() => setOpen(false)}
                   >
-                    <span className="font-display text-2xl">
+                    <span
+                      className={
+                        "display text-3xl " +
+                        (isActive(item.href)
+                          ? "text-[color:var(--lime)]"
+                          : "text-white")
+                      }
+                    >
                       {item.title}
                     </span>
-                    <span className="num label">{item.num}</span>
+                    <span className="num label text-white/40">{item.num}</span>
                   </a>
                 </li>
               ))}

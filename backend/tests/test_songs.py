@@ -159,9 +159,30 @@ class TestRunProcessTopTracks:
         processing_users = {mock_user.id}
         _run_process_top_tracks(mock_user.id, mock_ingest, mock_db, processing_users)
 
-        mock_ingest.process_top_tracks.assert_called_once_with(mock_user, mock_db)
+        mock_ingest.process_top_tracks.assert_called_once()
+        args, kwargs = mock_ingest.process_top_tracks.call_args
+        assert args == (mock_user, mock_db)
+        assert callable(kwargs.get("on_first_success"))
         assert mock_user.id not in processing_users
         mock_db.close.assert_called_once()
+
+    def test_on_first_success_callback_unblocks_user_after_first_song(self, mock_db, mock_ingest, mock_user):
+        from app.api.v1.songs import _run_process_top_tracks
+
+        processing_users = {mock_user.id}
+        unblocked_mid_processing = False
+
+        def fake_process(user, db, on_first_success=None):
+            nonlocal unblocked_mid_processing
+            on_first_success()
+            unblocked_mid_processing = mock_user.id not in processing_users
+        mock_ingest.process_top_tracks.side_effect = fake_process
+
+        _run_process_top_tracks(mock_user.id, mock_ingest, mock_db, processing_users)
+
+        mock_ingest.query_recommendations.assert_called_once_with(mock_user, mock_db)
+        assert unblocked_mid_processing is True
+        assert mock_user.id not in processing_users
 
     def test_cleans_up_when_process_top_tracks_raises(self, mock_db, mock_ingest, mock_user):
         from app.api.v1.songs import _run_process_top_tracks

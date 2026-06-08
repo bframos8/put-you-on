@@ -19,7 +19,14 @@ def _run_process_top_tracks(user_id: int, ingest_service: SpotifyIngestService, 
         from ...db.models import User as UserModel
         user = db.query(UserModel).filter(UserModel.id == user_id).first()
         if user:
-            ingest_service.process_top_tracks(user, db)
+            # Generate today's dispatch as soon as the first top track finishes
+            # processing and let the frontend's /status poll flip to "ready".
+            # The remaining top tracks keep processing in the background so
+            # tomorrow's dispatch already has fresh query candidates.
+            def unblock():
+                ingest_service.query_recommendations(user, db)
+                processing_users.discard(user_id)
+            ingest_service.process_top_tracks(user, db, on_first_success=unblock)
     finally:
         processing_users.discard(user_id)
         db.close()

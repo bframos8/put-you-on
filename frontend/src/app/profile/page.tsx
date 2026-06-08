@@ -36,6 +36,13 @@ const TASTE_DESCRIPTORS = [
   "late-set",
 ];
 
+const TAG_TINTS = [
+  "bg-[color:var(--lime)] text-black",
+  "bg-[color:var(--pink)] text-black",
+  "bg-[color:var(--violet)] text-white",
+  "bg-white text-black",
+];
+
 function formatDuration(ms?: number | null): string {
   if (!ms) return "—:—";
   const total = Math.round(ms / 1000);
@@ -108,27 +115,27 @@ export default function ProfilePage() {
     .toUpperCase();
 
   return (
-    <div className="relative min-h-screen pt-20">
-      {/* ─── Section label / masthead ─── */}
-      <div className="border-y border-[color:var(--line)] bg-[color:var(--paper)]">
+    <div className="relative min-h-screen pt-16 overflow-hidden">
+      {/* ─── Marquee ─── */}
+      <div className="border-y-2 border-white bg-[color:var(--pink)] text-black overflow-hidden">
         <div className="marquee py-2">
-          <div className="marquee-track label">
+          <div className="marquee-track label text-[0.78rem]">
             {Array.from({ length: 12 }).map((_, i) => (
-              <span key={i} className="inline-flex items-center gap-8">
-                <span>§ PROFILE · CONTENTS N° {(i + 1).toString().padStart(3, "0")}</span>
-                <span aria-hidden className="opacity-40">✺</span>
+              <span key={i} className="inline-flex items-center gap-6">
+                <span>◖ YOUR TASTE · ON FILE N° {(i + 1).toString().padStart(3, "0")}</span>
+                <span aria-hidden>✺</span>
               </span>
             ))}
           </div>
         </div>
       </div>
 
-      {/* ─── Identity plate ─── */}
-      <section className="mx-auto max-w-[1480px] px-6 md:px-10 pt-10 md:pt-14">
-        <div className="grid grid-cols-12 gap-6 md:gap-10 pb-10 border-b-2 border-[color:var(--ink)]">
-          {/* Portrait */}
+      {/* ─── Identity card ─── */}
+      <section className="mx-auto max-w-[1480px] px-5 md:px-10 pt-10 md:pt-14">
+        <div className="grid grid-cols-12 gap-6 md:gap-10 pb-10 border-b-2 border-white">
+          {/* Portrait — pasted ID card */}
           <div className="col-span-12 md:col-span-4 lg:col-span-3">
-            <div className="sleeve aspect-[4/5] relative overflow-hidden">
+            <div className="paste paste-hover relative aspect-[4/5] overflow-hidden">
               {profile?.image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -137,71 +144,69 @@ export default function ProfilePage() {
                   className="h-full w-full object-cover"
                 />
               ) : (
-                <div className="flex h-full w-full items-center justify-center bg-[color:var(--ink)] text-[color:var(--paper)]">
-                  <span className="font-display text-[clamp(5rem,18vw,14rem)] leading-none">
+                <div className="flex h-full w-full items-center justify-center bg-[color:var(--violet)] text-white">
+                  <span className="tag-flat text-[clamp(5rem,18vw,14rem)] leading-none">
                     {initials || "P"}
                   </span>
                 </div>
               )}
-              <div className="absolute inset-x-0 bottom-0 bg-[color:var(--paper)] border-t border-[color:var(--ink)] px-3 py-2 flex items-center justify-between label">
-                <span>REC.</span>
+              <div className="absolute inset-x-0 bottom-0 bg-[color:var(--lime)] border-t-2 border-black px-3 py-2 flex items-center justify-between label text-black">
+                <span>ON FILE</span>
                 <span className="flex items-center gap-2">
-                  <span className="inline-block h-[7px] w-[7px] rounded-full bg-[color:var(--acid)] blink-dot border border-[color:var(--ink)]" />
-                  <span>ON FILE</span>
+                  <span className="inline-block h-[7px] w-[7px] rounded-full bg-black blink-dot" />
+                  <span>VERIFIED</span>
                 </span>
               </div>
             </div>
-            <p className="label num mt-3 text-[color:var(--mist)]">
-              PORTRAIT PLATE · 001
-            </p>
+            <p className="label num mt-3 text-white/45">PORTRAIT · 001</p>
           </div>
 
           {/* Identity type */}
           <div className="col-span-12 md:col-span-8 lg:col-span-9 flex flex-col justify-between">
             <div>
-              <div className="flex flex-wrap items-center gap-x-8 gap-y-2 label num text-[color:var(--mist)]">
+              <div className="flex flex-wrap items-center gap-x-8 gap-y-2 label num text-white/45">
                 <span>FILE N° {String(displayName.length * 41).padStart(5, "0")}</span>
                 <span>COUNTRY / {profile?.country ?? "—"}</span>
                 <span>EMAIL / {profile?.email ?? "—"}</span>
               </div>
               <h1
-                className="font-display text-[clamp(3.2rem,12vw,10rem)] leading-[0.84] mt-5 rise"
+                className="mt-5 leading-[0.82] rise"
                 style={{ animationDelay: "0.1s" }}
               >
-                <span className="block">
-                  <span className="font-display-soft">Hello,</span>
+                <span className="block display text-[clamp(2.6rem,9vw,7rem)] text-white">
+                  What&rsquo;s good,
                 </span>
-                <span className="block">{firstName}.</span>
+                <span className="block tag-lime text-[clamp(2.8rem,11vw,8.5rem)]">
+                  {firstName.toUpperCase()}.
+                </span>
               </h1>
             </div>
 
             <div className="grid grid-cols-12 gap-6 mt-10">
               <div className="col-span-12 md:col-span-7">
-                <p className="font-display text-[1.35rem] leading-[1.25] max-w-[60ch] -tracking-[0.005em]">
-                  A dispatch of your ten most-played songs, with a side of what
-                  our machines think they say about you. Read it as a{" "}
-                  <span className="font-display-soft">
-                    listening notebook
-                  </span>
+                <p className="font-body text-[1.05rem] leading-relaxed text-white max-w-[60ch]">
+                  Your ten most-played, plus what our machines reckon they say
+                  about you. Read it as a{" "}
+                  <span className="ink-lime font-semibold">listening notebook</span>
                   &nbsp;— not a diagnosis.
                 </p>
               </div>
               <div className="col-span-12 md:col-span-5">
-                <div className="rule rule-thick mb-3" />
+                <div className="rule-signal mb-3" />
                 <div className="flex flex-col gap-2 label">
                   <div className="flex items-center justify-between">
-                    <span className="text-[color:var(--mist)]">TRACKS ON FILE</span>
-                    <span className="num text-lg">
+                    <span className="text-white/45">TRACKS ON FILE</span>
+                    <span className="num text-lg text-[color:var(--lime)]">
                       {tracks.length.toString().padStart(2, "0")}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[color:var(--mist)]">DISPATCH STREAK</span>
-                    <span className="num text-lg">07 DAYS</span>
+                    <span className="text-white/45">DAILY STREAK</span>
+                    <span className="num text-lg text-white">07 DAYS</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[color:var(--mist)]">LAST SYNC</span>
-                    <span className="num text-lg">just now</span>
+                    <span className="text-white/45">LAST SYNC</span>
+                    <span className="num text-lg text-white">just now</span>
                   </div>
                 </div>
               </div>
@@ -210,40 +215,38 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      {/* ─── Taste profile tags ─── */}
-      <section className="mx-auto max-w-[1480px] px-6 md:px-10 py-10">
+      {/* ─── Taste tags ─── */}
+      <section className="mx-auto max-w-[1480px] px-5 md:px-10 py-10">
         <div className="flex items-end justify-between">
-          <span className="label">§ TASTE — EXTRACTED</span>
-          <span className="label num text-[color:var(--mist)]">
-            INFERRED FROM TOP 10
-          </span>
+          <span className="label text-[color:var(--lime)]">◖ YOUR TASTE, READ BACK</span>
+          <span className="label num text-white/45">FROM YOUR TOP 10</span>
         </div>
-        <div className="flex flex-wrap gap-2 mt-5">
+        <div className="flex flex-wrap gap-3 mt-5">
           {descriptors.map((d, i) => (
             <span
               key={d}
-              className="border border-[color:var(--ink)] px-4 py-2 font-display text-lg rise"
+              className={
+                "sticker display text-xl px-4 py-2 rise " + TAG_TINTS[i % TAG_TINTS.length]
+              }
               style={{ animationDelay: `${0.2 + i * 0.08}s` }}
             >
-              <span className="font-display-soft">{d}</span>
+              {d}
             </span>
           ))}
         </div>
       </section>
 
-      {/* ─── Contents: Top 10 ─── */}
-      <section className="mx-auto max-w-[1480px] px-6 md:px-10 pb-20">
-        <div className="flex items-end justify-between pb-4 border-b-2 border-[color:var(--ink)]">
+      {/* ─── Top 10 ─── */}
+      <section className="mx-auto max-w-[1480px] px-5 md:px-10 pb-20">
+        <div className="flex items-end justify-between pb-4 border-b-2 border-white">
           <div>
-            <span className="label">§ 03 — CONTENTS</span>
-            <h2 className="font-display text-5xl md:text-7xl leading-[0.9] mt-3">
-              The top ten,{" "}
-              <span className="font-display-soft">
-                straight from your ear.
-              </span>
+            <span className="label text-white/50">◖ THE TOP TEN</span>
+            <h2 className="display text-4xl md:text-6xl leading-[0.9] mt-3 text-white">
+              Straight from{" "}
+              <span className="ink-lime">your ear.</span>
             </h2>
           </div>
-          <div className="hidden md:flex items-center gap-6 label num text-[color:var(--mist)]">
+          <div className="hidden md:flex items-center gap-6 label num text-white/40">
             <span>TRACK</span>
             <span>LENGTH</span>
           </div>
@@ -260,23 +263,21 @@ export default function ProfilePage() {
                 key={t.id}
                 onMouseEnter={() => setHovered(i)}
                 onMouseLeave={() => setHovered(null)}
-                className="relative group border-b border-[color:var(--line)]"
+                className="relative group border-b border-white/15"
               >
                 <a
                   href={t.album_url ?? undefined}
                   target={t.album_url ? "_blank" : undefined}
                   rel="noopener noreferrer"
-                  className="grid grid-cols-12 gap-4 items-center py-5 md:py-6"
+                  className="relative z-[2] grid grid-cols-12 gap-4 items-center py-5 md:py-6"
                 >
-                  {/* index */}
-                  <span className="col-span-2 md:col-span-1 num font-mono text-[color:var(--mist)] text-sm">
+                  <span className="col-span-2 md:col-span-1 num font-body text-white/40 text-sm">
                     {(i + 1).toString().padStart(2, "0")}
                   </span>
 
-                  {/* cover + title block */}
                   <div className="col-span-10 md:col-span-7 flex items-center gap-4 min-w-0">
                     {t.image_url ? (
-                      <div className="shrink-0 size-14 md:size-16 border border-[color:var(--line)] overflow-hidden">
+                      <div className="shrink-0 size-14 md:size-16 border-2 border-white/80 overflow-hidden">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={t.image_url}
@@ -288,47 +289,58 @@ export default function ProfilePage() {
                         />
                       </div>
                     ) : (
-                      <div className="shrink-0 size-14 md:size-16 border border-[color:var(--line)] flex items-center justify-center bg-[color:var(--ink)] text-[color:var(--paper)]">
-                        <Disc3
-                          size={28}
-                          className={hovered === i ? "reel" : ""}
-                        />
+                      <div className="shrink-0 size-14 md:size-16 border-2 border-white/80 flex items-center justify-center bg-[color:var(--violet)] text-white">
+                        <Disc3 size={28} strokeWidth={1.5} className={hovered === i ? "reel" : ""} />
                       </div>
                     )}
                     <div className="min-w-0">
-                      <p className="font-display text-2xl md:text-3xl leading-[1.05] truncate">
+                      <p
+                        className={
+                          "display text-2xl md:text-3xl leading-[1.05] truncate transition-colors " +
+                          (hovered === i ? "text-black" : "text-white")
+                        }
+                      >
                         {t.title}
                       </p>
-                      <p className="font-mono text-[0.78rem] text-[color:var(--mist)] truncate mt-1">
+                      <p
+                        className={
+                          "font-body text-[0.8rem] truncate mt-1 transition-colors " +
+                          (hovered === i ? "text-black/65" : "text-white/50")
+                        }
+                      >
                         {t.artist_name}
                         {t.album_title ? ` · ${t.album_title}` : ""}
                       </p>
                     </div>
                   </div>
 
-                  {/* dotted leader & metadata */}
                   <div className="hidden md:flex col-span-4 items-baseline">
                     <span className="dotted-leader" />
-                    <span className="num label text-[color:var(--mist)]">
+                    <span
+                      className={
+                        "num label transition-colors " +
+                        (hovered === i ? "text-black/70" : "text-white/45")
+                      }
+                    >
                       {formatDuration(t.duration_ms)}
                     </span>
                     <span
                       className={
-                        "ml-4 inline-flex size-9 items-center justify-center border border-[color:var(--ink)] transition-colors " +
+                        "ml-4 inline-flex size-9 items-center justify-center border-2 transition-colors " +
                         (hovered === i
-                          ? "bg-[color:var(--acid)]"
-                          : "bg-transparent")
+                          ? "bg-black text-[color:var(--lime)] border-black"
+                          : "bg-transparent text-white border-white")
                       }
                     >
                       <Play size={14} className="fill-current" />
                     </span>
                   </div>
                 </a>
-                {/* sweep */}
+                {/* lime sweep on hover */}
                 <span
                   aria-hidden
                   className={
-                    "pointer-events-none absolute left-0 top-0 h-full w-full origin-left bg-[color:var(--acid)]/15 transition-transform duration-500 " +
+                    "pointer-events-none absolute left-0 top-0 h-full w-full origin-left bg-[color:var(--lime)] transition-transform duration-500 z-[1] " +
                     (hovered === i ? "scale-x-100" : "scale-x-0")
                   }
                 />
@@ -337,31 +349,27 @@ export default function ProfilePage() {
           </ol>
         )}
 
-        <div className="flex items-end justify-between pt-6">
-          <span className="label text-[color:var(--mist)]">
-            ↳ END OF CONTENTS · TURN THE PAGE
-          </span>
+        <div className="flex flex-wrap items-end justify-between gap-4 pt-6">
+          <span className="label text-white/45">↳ END OF FILE</span>
           <a
             href="/dashboard"
-            className="group inline-flex items-baseline gap-3 hover-rule"
+            className="group inline-flex items-baseline gap-3"
           >
-            <span className="label">NEXT UP</span>
-            <span className="font-display text-3xl md:text-4xl -tracking-[0.02em]">
-              Your recommendations{" "}
-              <span className="font-display-soft">→</span>
+            <span className="label text-[color:var(--lime)]">NEXT UP</span>
+            <span className="spray-link display text-3xl md:text-4xl text-white">
+              Today&rsquo;s batch →
             </span>
           </a>
         </div>
       </section>
 
       {/* ─── Vanity type ─── */}
-      <section className="border-t-2 border-[color:var(--ink)] overflow-hidden">
+      <section className="border-t-2 border-white overflow-hidden bg-black">
         <div
-          className="font-display leading-none text-[clamp(6rem,22vw,20rem)] tracking-[-0.06em] whitespace-nowrap text-center py-3"
+          className="tag-flat leading-none text-[clamp(5rem,22vw,18rem)] whitespace-nowrap text-center py-3 text-white/10"
           aria-hidden
         >
-          {firstName.toLowerCase()}{" "}
-          <span className="font-display-soft">/ on file</span>
+          {firstName.toUpperCase()} ON FILE
         </div>
       </section>
     </div>
@@ -374,16 +382,16 @@ function LoadingList() {
       {Array.from({ length: 6 }).map((_, i) => (
         <li
           key={i}
-          className="grid grid-cols-12 gap-4 items-center py-6 border-b border-[color:var(--line)]"
+          className="grid grid-cols-12 gap-4 items-center py-6 border-b border-white/15"
         >
-          <span className="col-span-1 num label text-[color:var(--mist)]">
+          <span className="col-span-1 num label text-white/35">
             {(i + 1).toString().padStart(2, "0")}
           </span>
           <div className="col-span-11 md:col-span-7 flex items-center gap-4">
-            <div className="size-14 md:size-16 border border-[color:var(--line)] animate-pulse bg-[color:var(--ink)]/5" />
+            <div className="size-14 md:size-16 border-2 border-white/30 animate-pulse bg-white/5" />
             <div className="flex flex-col gap-2 w-full">
-              <div className="h-5 w-1/2 bg-[color:var(--ink)]/5 animate-pulse" />
-              <div className="h-3 w-1/3 bg-[color:var(--ink)]/5 animate-pulse" />
+              <div className="h-5 w-1/2 bg-white/10 animate-pulse" />
+              <div className="h-3 w-1/3 bg-white/10 animate-pulse" />
             </div>
           </div>
         </li>
@@ -395,19 +403,16 @@ function LoadingList() {
 function EmptyTracks() {
   return (
     <div className="mt-12 flex flex-col items-start gap-5">
-      <span className="label">NO TRACKS ON FILE · YET</span>
-      <p className="font-display text-4xl md:text-5xl leading-[1] max-w-[24ch]">
+      <span className="label text-white/50">NO TRACKS ON FILE · YET</span>
+      <p className="display text-4xl md:text-5xl leading-[1] max-w-[24ch] text-white">
         Play a few songs on Spotify.{" "}
-        <span className="font-display-soft">
-          Your file fills itself.
-        </span>
+        <span className="ink-lime">Your file fills itself.</span>
       </p>
       <a
         href="/dashboard"
-        className="mt-2 inline-flex items-center gap-3 border border-[color:var(--ink)] px-5 py-3 font-display text-xl hover:bg-[color:var(--ink)] hover:text-[color:var(--paper)] transition-colors"
+        className="mt-2 inline-flex items-center gap-3 border-2 border-white px-5 py-3 display text-xl text-white hover:bg-[color:var(--lime)] hover:text-black hover:border-[color:var(--lime)] transition-colors"
       >
-        Head to your dispatch{" "}
-        <span className="font-display-soft">→</span>
+        Head to today&rsquo;s batch →
       </a>
     </div>
   );

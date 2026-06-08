@@ -21,15 +21,15 @@ function CallbackInner() {
   if (error) {
     return (
       <Shell>
-        <span className="label text-[color:var(--mist)]">§ SIGNAL LOST</span>
-        <p className="font-display text-4xl md:text-5xl leading-[1] mt-3 max-w-[22ch]">
+        <span className="label text-[color:var(--pink)]">◖ SIGNAL LOST</span>
+        <p className="display text-4xl md:text-5xl leading-[1] mt-3 max-w-[22ch] text-white">
           {error}.
         </p>
         <button
           onClick={() => router.push("/")}
-          className="mt-6 inline-flex items-center gap-2 border border-[color:var(--ink)] px-5 py-3 font-display text-lg hover:bg-[color:var(--ink)] hover:text-[color:var(--paper)] transition-colors"
+          className="mt-6 inline-flex items-center gap-2 border-2 border-white px-5 py-3 display text-lg text-white hover:bg-[color:var(--lime)] hover:text-black hover:border-[color:var(--lime)] transition-colors"
         >
-          ↩ Back to the masthead
+          ↩ Back home
         </button>
       </Shell>
     );
@@ -51,14 +51,11 @@ function Shell({ children }: { children: React.ReactNode }) {
 function Tuning() {
   return (
     <Shell>
-      <Disc3 size={52} className="reel" />
-      <span className="label mt-6 text-[color:var(--mist)]">§ TUNING IN</span>
-      <p className="font-display text-5xl md:text-6xl leading-[0.95] mt-3">
-        Catching the{" "}
-        <span className="font-display-soft">signal…</span>
-      </p>
-      <p className="font-mono text-sm text-[color:var(--mist)] mt-4">
-        Handshake with Spotify in progress. Don&rsquo;t touch that dial.
+      <Disc3 size={52} strokeWidth={1.5} className="reel text-[color:var(--lime)]" />
+      <span className="label mt-6 text-white/50">◖ PLUGGING IN</span>
+      <p className="tag text-5xl md:text-6xl mt-4">HOLD UP…</p>
+      <p className="font-body text-[0.95rem] text-white/60 mt-4">
+        Shaking hands with Spotify. Don&rsquo;t touch that dial.
       </p>
     </Shell>
   );

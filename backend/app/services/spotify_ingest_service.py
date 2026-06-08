@@ -2,6 +2,7 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from fastapi import Request
 from sqlalchemy import func, case, or_
@@ -102,7 +103,12 @@ class SpotifyIngestService:
             ))
         db.commit()
 
-    def process_top_tracks(self, user: User, db: Session) -> None:
+    def process_top_tracks(
+        self,
+        user: User,
+        db: Session,
+        on_first_success: Callable[[], None] | None = None,
+    ) -> None:
         unprocessed = (
             db.query(UserTopSong)
             .filter(
@@ -111,52 +117,71 @@ class SpotifyIngestService:
             )
             .all()
         )
+        first_done = False
         for top_song in unprocessed:
             existing = db.query(Song).filter(Song.spotify_track_id == top_song.spotify_track_id).first()
+            success = False
 
             # Fast path: an existing Song already carries a genre — reuse it.
             if existing and existing.genre:
                 top_song.song_id = existing.id
                 top_song.genre = existing.genre
                 db.commit()
-                continue
+                success = True
+            else:
+                print(f"Processing: {top_song.track_title} | {top_song.spotify_url}")
+                try:
+                    audio_path = self._download(top_song.spotify_url)
+                except Exception as e:
+                    print(f"Skipping {top_song.track_title}: download failed — {e}")
+                    continue
 
-            print(f"Processing: {top_song.track_title} | {top_song.spotify_url}")
-            try:
-                audio_path = self._download(top_song.spotify_url)
-            except Exception as e:
-                print(f"Skipping {top_song.track_title}: download failed — {e}")
-                continue
+                print(f"Downloaded to: {audio_path}")
+                try:
+                    audio = self._load_audio(audio_path)
+                    genre = self.genre_classifier.classify(audio)
+                    top_song.genre = genre
 
-            print(f"Downloaded to: {audio_path}")
-            try:
-                audio = self._load_audio(audio_path)
-                genre = self.genre_classifier.classify(audio)
-                top_song.genre = genre
+                    if existing:
+                        top_song.song_id = existing.id
+                        existing.genre = genre
+                    else:
+                        embedding = self._embed(audio)
+                        song = Song(
+                            title=top_song.track_title,
+                            artist_name=top_song.artist_name,
+                            album_title=top_song.album_title,
+                            spotify_track_id=top_song.spotify_track_id,
+                            genre=genre,
+                            embedding=embedding.tolist(),
+                            is_candidate=False,
+                        )
+                        db.add(song)
+                        db.flush()
+                        top_song.song_id = song.id
+                    db.commit()
+                    success = True
+                except Exception as e:
+                    db.rollback()
+                    print(f"Skipping {top_song.track_title}: processing failed — {e}")
+                finally:
+                    self._cleanup(audio_path)
 
-                if existing:
-                    top_song.song_id = existing.id
-                    existing.genre = genre
-                else:
-                    embedding = self._embed(audio)
-                    song = Song(
-                        title=top_song.track_title,
-                        artist_name=top_song.artist_name,
-                        album_title=top_song.album_title,
-                        spotify_track_id=top_song.spotify_track_id,
-                        genre=genre,
-                        embedding=embedding.tolist(),
-                        is_candidate=False,
-                    )
-                    db.add(song)
-                    db.flush()
-                    top_song.song_id = song.id
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                print(f"Skipping {top_song.track_title}: processing failed — {e}")
-            finally:
-                self._cleanup(audio_path)
+            if success and not first_done and on_first_success:
+                first_done = self._fire_first_success(on_first_success, db)
+
+    @staticmethod
+    def _fire_first_success(callback, db: Session) -> bool:
+        # Roll back on failure so any in-memory changes the callback made
+        # (e.g. UserTopSong.used_as_query=True inside query_recommendations)
+        # don't bleed into the next iteration's commit.
+        try:
+            callback()
+            return True
+        except Exception as e:
+            db.rollback()
+            print(f"on_first_success callback failed; will retry on next song: {e}")
+            return False
 
     def snapshot_is_stale(self, user: User, db: Session) -> bool:
         result = db.query(

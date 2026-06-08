@@ -69,24 +69,25 @@ function RefreshButton({
   const disabled = lockedForToday || isRateLimited;
 
   const label = lockedForToday
-    ? "Tomorrow · 12:00 AM PST"
+    ? "Back tomorrow · 12 AM PST"
     : isRateLimited
-    ? `Refresh in ${retryIn}s`
-    : "Pull a new dispatch";
+    ? `Hold up · ${retryIn}s`
+    : "Pull a fresh batch";
 
   return (
     <button
       disabled={disabled}
       onClick={() => !disabled && onRefresh()}
       className={
-        "group inline-flex items-center gap-3 border border-[color:var(--ink)] px-5 py-3 font-display text-lg transition-colors " +
+        "group inline-flex items-center gap-3 border-2 border-white px-5 py-3 display text-lg text-white transition-colors " +
         (disabled
           ? "opacity-40 cursor-not-allowed"
-          : "hover:bg-[color:var(--acid)]")
+          : "hover:bg-[color:var(--lime)] hover:text-black hover:border-[color:var(--lime)]")
       }
     >
       <RefreshCw
         size={16}
+        strokeWidth={2.5}
         className="transition-transform duration-500 group-hover:rotate-180"
       />
       <span>{label}</span>
@@ -172,17 +173,12 @@ export function SongRecCarousel() {
   if (processing) {
     return (
       <div className="relative flex flex-col items-center py-16 px-4 text-center max-w-xl mx-auto">
-        <Disc3 size={54} className="reel text-[color:var(--ink)]" />
-        <span className="label mt-6 text-[color:var(--mist)]">
-          § PRESSING YOUR DISPATCH
-        </span>
-        <p className="font-display text-4xl md:text-5xl leading-[0.95] mt-3">
-          Cutting the{" "}
-          <span className="font-display-soft">acetate…</span>
-        </p>
-        <p className="font-mono text-sm text-[color:var(--mist)] mt-4 max-w-sm leading-relaxed">
-          First issue always takes a minute. The machines are listening back to
-          your top tracks and pulling the nearest neighbors. Stay.
+        <Disc3 size={54} strokeWidth={1.5} className="reel text-[color:var(--lime)]" />
+        <span className="label mt-6 text-white/50">◖ COOKING YOUR BATCH</span>
+        <p className="tag text-4xl md:text-5xl mt-4">DIGGING…</p>
+        <p className="font-body text-[0.95rem] text-white/60 mt-4 max-w-sm leading-relaxed">
+          First batch always takes a minute. The machines are listening back to
+          your top tracks and pulling the nearest neighbors. Stay put.
         </p>
       </div>
     );
@@ -191,15 +187,12 @@ export function SongRecCarousel() {
   if (recs && recs.recommendations.length === 0) {
     return (
       <div className="flex flex-col items-start py-10">
-        <span className="label text-[color:var(--mist)]">
-          § NO DISPATCH TODAY
-        </span>
-        <p className="font-display text-4xl md:text-5xl leading-[0.95] mt-3 max-w-[20ch]">
-          You&rsquo;re{" "}
-          <span className="font-display-soft">caught up.</span>
+        <span className="label text-white/50">◖ NOTHING NEW TODAY</span>
+        <p className="display text-4xl md:text-5xl leading-[0.95] mt-3 max-w-[20ch] text-white">
+          You&rsquo;re <span className="ink-lime">all caught up.</span>
         </p>
-        <p className="font-mono text-sm text-[color:var(--mist)] mt-3">
-          Come back tomorrow for a fresh issue.
+        <p className="font-body text-[0.95rem] text-white/60 mt-3">
+          Come back tomorrow for a fresh batch.
         </p>
         <div className="mt-6">
           <RefreshButton
@@ -218,52 +211,44 @@ export function SongRecCarousel() {
   return (
     <div className="w-full">
       {/* header strip */}
-      <div className="flex flex-wrap items-end justify-between gap-4 pb-3 border-b-2 border-[color:var(--ink)]">
+      <div className="flex flex-wrap items-end justify-between gap-4 pb-3 border-b-2 border-white">
         <div>
-          <span className="label">§ 04 — DISPATCH FOR TODAY</span>
-          <h2 className="font-display text-3xl md:text-4xl leading-[0.95] mt-2 max-w-[22ch]">
-            Ten songs, {" "}
-            <span className="font-display-soft">
-              in the key of
-            </span>{" "}
-            &ldquo;{recs?.query_title}&rdquo;
+          <span className="label text-[color:var(--lime)]">◖ TODAY&rsquo;S BATCH</span>
+          <h2 className="display text-3xl md:text-4xl leading-[0.95] mt-2 max-w-[22ch] text-white">
+            Ten songs in the key of{" "}
+            <span className="ink-lime">&ldquo;{recs?.query_title}&rdquo;</span>
           </h2>
-          <p className="font-mono text-[0.82rem] text-[color:var(--mist)] mt-2">
-            seeded by {" "}
-            <span className="text-[color:var(--ink)]">
-              {recs?.query_title}
-            </span>{" "}
-            by {" "}
-            <span className="text-[color:var(--ink)]">
-              {recs?.query_artist}
-            </span>
+          <p className="font-body text-[0.85rem] text-white/55 mt-2">
+            seeded by{" "}
+            <span className="text-white font-semibold">{recs?.query_title}</span>{" "}
+            by <span className="text-white font-semibold">{recs?.query_artist}</span>
           </p>
         </div>
         <div className="flex items-center gap-4">
-          <div className="label num text-[color:var(--mist)]">
-            <span className="num text-[color:var(--ink)]">
+          <div className="label num text-white/45">
+            <span className="num text-[color:var(--lime)]">
               {(index + 1).toString().padStart(2, "0")}
             </span>{" "}
             / {total.toString().padStart(2, "0")}
           </div>
-          <div className="flex border border-[color:var(--ink)]">
+          <div className="flex border-2 border-white">
             <button
               type="button"
               onClick={() => setIndex((i) => Math.max(0, i - 1))}
               disabled={index === 0}
-              className="size-10 flex items-center justify-center disabled:opacity-30 hover:bg-[color:var(--ink)] hover:text-[color:var(--paper)] transition"
+              className="size-10 flex items-center justify-center text-white disabled:opacity-30 hover:bg-[color:var(--lime)] hover:text-black transition"
               aria-label="Previous"
             >
-              <ArrowLeft size={16} />
+              <ArrowLeft size={16} strokeWidth={2.5} />
             </button>
             <button
               type="button"
               onClick={() => setIndex((i) => Math.min(total - 1, i + 1))}
               disabled={index >= total - 1}
-              className="size-10 flex items-center justify-center border-l border-[color:var(--ink)] disabled:opacity-30 hover:bg-[color:var(--ink)] hover:text-[color:var(--paper)] transition"
+              className="size-10 flex items-center justify-center text-white border-l-2 border-white disabled:opacity-30 hover:bg-[color:var(--lime)] hover:text-black transition"
               aria-label="Next"
             >
-              <ArrowRight size={16} />
+              <ArrowRight size={16} strokeWidth={2.5} />
             </button>
           </div>
         </div>
@@ -281,9 +266,9 @@ export function SongRecCarousel() {
                     href={song.album_url ?? undefined}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block sleeve sleeve-hover"
+                    className="block paste paste-hover"
                   >
-                    <div className="aspect-square relative overflow-hidden bg-[color:var(--ink)]">
+                    <div className="aspect-square relative overflow-hidden bg-black">
                       {song.image_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -292,29 +277,29 @@ export function SongRecCarousel() {
                           className="h-full w-full object-cover"
                         />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center text-[color:var(--paper)]">
-                          <Disc3 size={56} />
+                        <div className="flex h-full w-full items-center justify-center text-[color:var(--lime)]">
+                          <Disc3 size={56} strokeWidth={1.5} />
                         </div>
                       )}
                       {/* catalog corner */}
-                      <div className="absolute top-2 left-2 label num bg-[color:var(--paper)] border border-[color:var(--ink)] px-2 py-1">
+                      <div className="absolute top-2 left-2 label num bg-white text-black px-2 py-1">
                         N° {(i + 1).toString().padStart(2, "0")}
                       </div>
-                      <div className="absolute top-2 right-2 label bg-[color:var(--acid)] border border-[color:var(--ink)] px-2 py-1">
-                        PYO / 2026
+                      <div className="absolute top-2 right-2 label bg-[color:var(--lime)] text-black px-2 py-1">
+                        FRESH
                       </div>
                     </div>
-                    {/* sleeve label plate */}
-                    <div className="flex items-baseline justify-between gap-3 border-t border-[color:var(--ink)] px-3 py-2 bg-[color:var(--paper)]">
+                    {/* label plate */}
+                    <div className="flex items-baseline justify-between gap-3 border-t-2 border-black px-3 py-2.5 bg-white">
                       <div className="min-w-0">
-                        <p className="font-display text-lg leading-tight truncate">
+                        <p className="display text-lg leading-tight truncate text-black">
                           {song.title}
                         </p>
-                        <p className="font-mono text-[0.7rem] text-[color:var(--mist)] truncate mt-0.5">
+                        <p className="font-body text-[0.74rem] text-black/55 truncate mt-0.5">
                           {song.artist_name} · {song.album_title}
                         </p>
                       </div>
-                      <span className="label shrink-0">SIDE&nbsp;A</span>
+                      <span className="label shrink-0 text-black/60">PLAY ↗</span>
                     </div>
                   </a>
                 </CarouselItem>
@@ -326,10 +311,10 @@ export function SongRecCarousel() {
 
         {/* ─── Side contents list ─── */}
         <div className="col-span-12 lg:col-span-7">
-          <div className="flex items-end justify-between pb-3 border-b-2 border-[color:var(--ink)]">
-            <span className="label">§ FULL CONTENTS</span>
-            <span className="label num text-[color:var(--mist)]">
-              TRACKS / {total.toString().padStart(2, "0")}
+          <div className="flex items-end justify-between pb-3 border-b-2 border-white">
+            <span className="label text-white">◖ THE FULL SET</span>
+            <span className="label num text-white/45">
+              {total.toString().padStart(2, "0")} TRACKS
             </span>
           </div>
           <ul className="max-h-[480px] overflow-y-auto no-scrollbar">
@@ -337,23 +322,40 @@ export function SongRecCarousel() {
               <li
                 key={s.id}
                 className={
-                  "border-b border-dashed border-[color:var(--line)] transition-colors " +
-                  (i === index ? "bg-[color:var(--acid)]/35" : "")
+                  "border-b border-white/12 transition-colors " +
+                  (i === index ? "bg-[color:var(--lime)] text-black" : "")
                 }
               >
                 <button
                   type="button"
                   onClick={() => setIndex(i)}
-                  className="w-full flex items-baseline gap-3 py-3 text-left group"
+                  className="w-full flex items-baseline gap-3 py-3 px-2 text-left group"
                 >
-                  <span className="num label text-[color:var(--mist)] w-8 shrink-0">
+                  <span
+                    className={
+                      "num label w-8 shrink-0 " +
+                      (i === index ? "text-black/60" : "text-white/40")
+                    }
+                  >
                     {(i + 1).toString().padStart(2, "0")}
                   </span>
-                  <span className="font-display text-[1.2rem] leading-tight truncate">
+                  <span
+                    className={
+                      "display text-[1.2rem] leading-tight truncate transition-colors " +
+                      (i === index
+                        ? "text-black"
+                        : "text-white group-hover:text-[color:var(--lime)]")
+                    }
+                  >
                     {s.title}
                   </span>
                   <span className="dotted-leader" />
-                  <span className="font-mono text-[0.74rem] text-[color:var(--mist)] shrink-0 max-w-[40%] truncate">
+                  <span
+                    className={
+                      "font-body text-[0.76rem] shrink-0 max-w-[40%] truncate " +
+                      (i === index ? "text-black/65" : "text-white/45")
+                    }
+                  >
                     {s.artist_name}
                   </span>
                 </button>
@@ -361,10 +363,8 @@ export function SongRecCarousel() {
             ))}
           </ul>
 
-          <div className="mt-8 flex items-center justify-between">
-            <p className="label text-[color:var(--mist)]">
-              ↳ the next dispatch arrives tomorrow
-            </p>
+          <div className="mt-8 flex flex-wrap items-center justify-between gap-4">
+            <p className="label text-white/45">↳ next batch drops tomorrow</p>
             <RefreshButton
               retryIn={retryIn}
               lockedForToday={recs?.locked_for_today ?? false}
