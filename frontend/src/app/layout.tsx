@@ -1,48 +1,51 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
-import { Hind, Permanent_Marker } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/shadcn-studio/blocks/navbar-component-01/navbar-component-01";
 
 /* ── BRAND FONTS ─────────────────────────────────────────────────────────
- * See frontend/.claude-frontend-V2 for the full type system + swap contract.
+ * See frontend/.claude-frontend-V3 for the full type system + voice rules.
  *
- *  --font-accent  Smiley Sans (得意黑)   self-hosted, the loud workhorse display
- *  --font-body    Kohinoor Telugu        ← SUBSTITUTE: Hind (same foundry, ITF)
- *  --font-burst   behance DX Burst       ← SUBSTITUTE: Permanent Marker (tag/marker)
+ *  --font-body    Helvetica          the calm Swiss read (paragraphs, metadata)
+ *  --font-accent  Smiley Sans (得意黑) the loud workhorse display (headlines, UI)
+ *  --font-burst   behance Estrella   the rare graffiti tag / signature
  *
- * To swap a substitute for the real file: drop it in src/assets/fonts/ and
- * replace the next/font/google import below with a `localFont({ ... })` call
- * exposing the SAME css variable. Nothing else needs to change.
+ * All three are self-hosted in src/assets/fonts/ and exposed as CSS variables;
+ * components reference the variables, never the font names.
  * ------------------------------------------------------------------------ */
 
-// Accent — Smiley Sans (self-hosted, final).
+// Body — Helvetica (real, self-hosted).
+const body = localFont({
+  src: [
+    { path: "../assets/fonts/helvetica-light-587ebe5a59211.ttf", weight: "300", style: "normal" },
+    { path: "../assets/fonts/Helvetica.ttf", weight: "400", style: "normal" },
+    { path: "../assets/fonts/Helvetica-Oblique.ttf", weight: "400", style: "italic" },
+    { path: "../assets/fonts/Helvetica-Bold.ttf", weight: "700", style: "normal" },
+    { path: "../assets/fonts/Helvetica-BoldOblique.ttf", weight: "700", style: "italic" },
+  ],
+  variable: "--font-body",
+  display: "swap",
+  fallback: ["Helvetica", "Helvetica Neue", "Arial", "sans-serif"],
+});
+
+// Accent — Smiley Sans (self-hosted).
 const accent = localFont({
   src: "../assets/fonts/SmileySans-Oblique.woff2",
   variable: "--font-accent",
   display: "swap",
 });
 
-// Body — substitute for Kohinoor Telugu (warm humanist sans, same foundry).
-const body = Hind({
-  variable: "--font-body",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  display: "swap",
-});
-
-// Burst — substitute for behance DX Burst (graffiti / marker tag face).
-const burst = Permanent_Marker({
+// Burst — behance Estrella, the graffiti tag face (self-hosted).
+const burst = localFont({
+  src: "../assets/fonts/Estrella.otf",
   variable: "--font-burst",
-  subsets: ["latin"],
-  weight: "400",
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Put You On — get put on to songs you haven't heard yet",
+  title: "Put You On — songs that sound like you",
   description:
-    "Put You On is a music plug. Log in with Spotify and we hand you 10 fresh songs a day — pulled straight off your own taste. No feed, no algorithm slop.",
+    "Log in with Spotify and get ten songs a day, picked for how close they sound to the music you already love. One small drop, not an endless feed.",
 };
 
 export default function RootLayout({

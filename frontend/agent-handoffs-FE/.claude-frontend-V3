@@ -1,0 +1,261 @@
+# .claude-frontend-V3 — Put You On / Frontend Redesign Brief
+
+> Context file for the V3 frontend redesign. Read this before touching any UI.
+> Created 2026-06-08 via the `frontend-design` skill.
+> Supersedes `.claude-frontend-V2` (kept for history). V3 = **cleaner, quieter, still bold.**
+
+---
+
+## 1. Original request (verbatim intent)
+
+> Remake the frontend design again. Plan first, ask for clarification — no assumptions.
+> Use the assets in the reference folder as reference.
+> - Body text font: **Helvetica**
+> - Accent font: **Smiley Sans** (得意黑)
+> - Second accent font: **behance Estrella** (graffiti tag face)
+> - Palette: `#5b75f4`, `#000000`, `#FFFFFF`, `#b095f8`, `#E6628E`
+>
+> Design notes:
+> - The past iterations have **too much going on** — make it **cleaner, less going on,
+>   but still beautiful** like the reference pictures.
+> - Focus the copy **away from telling the user about the embeddings.**
+> - Keep the focus on giving recommendations **based on how similar the songs are** —
+>   NOT the popularity of the songs or trends.
+
+**Reference files (note):** the request named `PYO_design_reference_2.png`; the actual
+files in `reference/` are `PYO_design_guidelines.png` and `PYO_design_guidelines_2.png`.
+We use **`PYO_design_guidelines_2.png`** as the primary reference (its palette is the
+exact five hex values above). It is a brand **guidelines sheet** — fonts, the five-color
+palette, and attitude via reference covers (gritty show posters, a "things aren't what
+they seem" cover in Smiley Sans, an orange dancing-figures cover). Read it as a mood /
+identity board — we design the actual layouts.
+
+## 2. Decisions locked with the user (2026-06-08)
+
+| Question | Decision |
+|---|---|
+| **Base canvas** | **Black base (carry V2) — but stripped down.** Keep the dark gallery-wall canvas, blue/pink/purple as sharp accents, lots more negative space, far fewer textures. The point of V3 is *restraint*. |
+| **Primary signal color** | **Pink `#E6628E`** is THE signal — primary CTAs, active states, the "put-on" highlight, links. Blue `#5b75f4` + purple `#b095f8` are supporting inks. (V2's lime is fully removed.) |
+| **Body font** | **Helvetica — real files provided** in `src/assets/fonts/` (Regular, Bold, Oblique, BoldOblique, Light, + Compressed & Rounded Bold). Wire via `next/font/local`. |
+| **Execution** | **Plan only, then stop for review.** No UI code changes until the plan is approved. |
+
+## 3. What "Put You On" is (product context)
+
+Music discovery app. User logs in with Spotify → we read their listening taste → we find
+songs that **sound similar** → we hand back **10 fresh song recs daily** (hard 10/day
+limit). No infinite feed. The whole pitch: *a friend who puts you on to new music.*
+
+**Voice rule for V3 (important — from the design notes):**
+- **Never mention "embeddings," "vectors," "nearest-neighbor," "model," or "algorithm."**
+  The product feels like a person with great taste, not a pipeline.
+- **Anchor every claim on SIMILARITY OF SOUND.** "songs that sound like what you love,"
+  "matched on how they actually sound," "close to your taste."
+- **Never lean on popularity / trends / charts / "what's hot."** We are explicitly the
+  *opposite* of a trend feed. If anything, lean *anti-trend*: deep cuts, sound-first.
+
+Stack: **Next.js 16 (app router) + React 19 + Tailwind v4** (CSS-first `@theme`, sharp
+corners / radius 0). Animation lib `motion` is already installed. Screens:
+
+- `src/app/page.tsx` — landing (login entry)
+- `src/app/dashboard/page.tsx` — daily recs (`song-rec-carousel`)
+- `src/app/profile/page.tsx` — Spotify profile + top-tracks "taste" page
+- `src/app/logout/page.tsx`, `src/app/callback/page.tsx`
+- `src/components/shadcn-studio/blocks/navbar-component-01/` — shared nav
+- `src/components/spotify-login-button.tsx`, `song-rec-carousel.tsx`
+- `src/app/globals.css` — current V2 design system (to be replaced)
+- `src/app/layout.tsx` — font wiring + grain + navbar
+
+---
+
+## 4. V3 design direction — "QUIET PRESS / SOUND-FIRST"
+
+**One-line concept:** the same midnight gallery wall as V2, but the lights came up and
+the clutter came down — one confident poster per view, generous black space, a single
+pink signal, and Estrella tags used like a rare signature instead of wallpaper.
+Discovery as *taste*, not noise.
+
+**The one thing someone remembers:** a single oversized **Smiley Sans** headline sitting
+in a sea of black, with **one** Estrella graffiti accent and **one** pink mark — and the
+restraint that makes it feel expensive. Where V2 shouted on every element, V3 lets *one*
+element shout per screen.
+
+### What "cleaner / less going on" means concretely (the V3 contract)
+
+Remove or dial way down vs V2:
+- ❌ Screen-print **mis-registration ghosting** on type (the offset color duplicates) —
+  remove from body/UI; allow at most on the single hero wordmark, subtle.
+- ❌ **Halftone dot fields** behind everything → at most one faint field, one screen.
+- ❌ **Marquee tickers** between sections → cut, or one slow quiet one max.
+- ❌ **Sticker rotations / tape / torn-poster** on every card → cards sit straight and
+  calm; rotation reserved for ≤1 intentional accent per screen.
+- ❌ Multiple loud colors per viewport → **one signal (pink) per view**, blue/purple rare.
+- ✅ Keep: black canvas, sharp corners (radius 0), a *faint* grain, big type, hairlines.
+- ✅ Add: **negative space as a design element** — let things breathe. Fewer, larger,
+  more deliberate moves. Strong typographic hierarchy doing the work instead of effects.
+
+Rule of thumb: **if V2's instinct was "add one more texture," V3's instinct is "remove
+one more thing." When in doubt, take it out.**
+
+### Type system (3 roles, matching the brief)
+
+| Role | Font | CSS var | Used for |
+|---|---|---|---|
+| **Tag / signature** | behance Estrella | `--font-burst` | the wordmark and **one** big section stamp or number per screen. Rare and large — a signature, not a texture. Never set sentences in it. |
+| **Accent / display** | Smiley Sans (得意黑) | `--font-accent` | headlines, big UI numbers, buttons, nav, labels, track titles. The workhorse loud voice — but used on fewer, bigger things in V3. |
+| **Body / read** | Helvetica | `--font-body` | paragraphs, metadata, captions, descriptions. Neutral, clean, Swiss — the calm that makes the loud parts land. |
+
+> Note: `--font-burst` keeps its variable name for continuity, but the *font behind it
+> changes* from V2's Permanent Marker placeholder → real **Estrella.otf**. "Burst" is
+> just the internal slot name for the graffiti-tag role.
+
+### Color tokens (exact hex from the brief)
+
+```
+--blue:   #5b75f4   /* supporting ink — section blocks, step accents, structure */
+--black:  #000000   /* base canvas (the dominant ground) */
+--white:  #FFFFFF   /* primary text on black, "paper" inserts */
+--violet: #b095f8   /* supporting ink — soft accent, hover, catalog badges */
+--pink:   #E6628E   /* PRIMARY SIGNAL — CTAs, active state, the put-on mark, the rec count */
+--yellow: #E8F24A   /* accent — pulled from the guidelines "Honey" flyer; sparing pop (numbers, the "Spotify" tag in the CTA, stat values) */
+```
+
+Update (2026-06-08, post-build): per user feedback the design now uses **more blue + violet**
+across screens (sample block is a full blue panel, step accents cycle pink → blue → yellow,
+catalog badges violet, dashboard footer + logout rules blue, profile stats yellow/violet),
+and **yellow** was added as a sparing accent. Pink stays the single primary signal/CTA.
+**Estrella (the tag face) is used more** now — it carries a big headline moment on every
+screen: the landing hero subline ("sound like you."), each step kicker, the sample-panel
+and CTA kickers, the dashboard "your sound." line, and the profile "coming back to." line,
+on top of the wordmark + logout sign-off. Body stays Helvetica; Smiley Sans stays the UI
+workhorse. (Earlier note said "more Smiley Sans" — that was a misread; the user wanted
+more Estrella.)
+The landing hero was tightened to fit one viewport (`min-h-[calc(100svh-4.5rem)]`, smaller
+clamp). The fabricated "how your top ten sounds" descriptor section was removed from profile
+(it wasn't backed by real data).
+
+Usage discipline (dominant + ONE sharp accent):
+- **Black** is ~75–80% of every screen (the wall, now with more empty space).
+- **White** carries body text and the occasional "pasted paper" inset.
+- **Pink** = THE brand signal: primary CTAs, active nav, the daily count, key links,
+  selection. **One hero pink moment per viewport — not pink everywhere.**
+- **Blue + Violet** = supporting inks for color-blocking and the rare second accent.
+  Used quietly. A blue block can anchor a section; violet softens a gradient or hover.
+
+### Texture & atmosphere (atmosphere, not noise)
+
+- Keep a **very faint grain** overlay (lower opacity than V2) so black isn't dead-flat.
+- Optional **one** soft radial glow (pink or blue) bleeding from behind the hero — subtle.
+- That's mostly it. The atmosphere in V3 comes from **space + type scale + one color**,
+  not from stacked print effects.
+
+### Motion (high-impact, restrained, mostly CSS)
+
+- **One** orchestrated page-load: hero headline + signal element stagger in via
+  `animation-delay` with a clean ease (settle, no bouncy overshoot — V2 was bouncier;
+  V3 is composed).
+- Hover: a single tasteful move — a pink underline draw, or a quiet lift — not peel/rotate.
+- Dashboard rec reveal: cards fade/slide in calmly, one at a time.
+- Respect `prefers-reduced-motion`.
+
+---
+
+## 5. Fonts — wiring contract (all files already provided)
+
+Location: `frontend/src/assets/fonts/`
+
+```
+Helvetica.ttf                         ← body  Regular (400)
+Helvetica-Bold.ttf                    ← body  Bold (700)
+Helvetica-Oblique.ttf                 ← body  Italic (400)
+Helvetica-BoldOblique.ttf             ← body  Bold Italic (700)
+helvetica-light-587ebe5a59211.ttf     ← body  Light (300) — optional
+helvetica-compressed-5871d14b6903a.otf← optional condensed display use (TBD)
+helvetica-rounded-bold-5871d05ead8de.otf ← optional rounded display use (TBD)
+SmileySans-Oblique.woff2              ← accent (Smiley Sans / 得意黑) — already wired
+Estrella.otf                          ← burst/tag (behance Estrella)
+```
+
+Wiring plan in `src/app/layout.tsx` (`next/font/local`):
+- **Body** → `localFont` over the Helvetica family (Regular/Bold/Oblique/BoldOblique,
+  optionally Light), exposing `--font-body`. Fallback stack:
+  `Helvetica, "Helvetica Neue", Arial, sans-serif`.
+- **Accent** → keep existing `SmileySans-Oblique.woff2` → `--font-accent`. ✅ unchanged.
+- **Burst/tag** → `Estrella.otf` → `--font-burst`. Replaces the V2 Permanent Marker
+  google-font substitute. Remove the `Hind` + `Permanent_Marker` google imports.
+
+Nothing in components needs to change for the font swap — everything references the CSS
+variables (`--font-body / --font-accent / --font-burst`).
+
+---
+
+## 6. Implementation plan (executed only after approval)
+
+**Phase 0 — Foundation**
+1. `layout.tsx`: drop `next/font/google` (Hind, Permanent_Marker); wire Helvetica family
+   + Estrella via `next/font/local`; keep Smiley Sans. Update `<metadata>` copy to the
+   sound-first / no-embeddings voice.
+2. `globals.css`: rebuild the design system for V3 —
+   - palette tokens: remove `--lime`; add `--blue #5b75f4`; change `--violet → #b095f8`;
+     repoint `--signal → --pink`; update shadcn contract (`--color-primary → pink`,
+     `--color-ring → pink`, secondary → blue, accent → violet).
+   - **strip V2 textures**: remove/dial down mis-registration, halftone, marquee, tape,
+     sticker-rotation utilities. Lower grain opacity. Add the restrained motion keyframes.
+   - tighten the type scale for big-and-spacious hierarchy.
+
+**Phase 1 — Shared chrome**
+3. Navbar: black bar, Estrella wordmark, Smiley Sans links, **pink** active state, sticky,
+   more whitespace.
+4. `spotify-login-button.tsx`: pink "put me on" CTA, single clean hover.
+
+**Phase 2 — Screens (rewrite copy to the sound-first voice as we go)**
+5. **Landing** (`page.tsx`): one big Smiley Sans hero ("songs that *sound* like you" —
+   sound-similarity framing, no embeddings/trends), generous black space, a calm 3-step
+   "how it works," a restrained sample-rec moment, one pink CTA, quiet footer tag.
+6. **Dashboard**: "today's 10" as a calm grid/carousel; the **10** set as a large pink
+   Estrella/Smiley count; date stamp; copy = "10 songs matched to how yours sound."
+7. **Profile**: Spotify identity as one clean pasted ID card; top tracks as a calm list
+   /grid; taste described in sound terms (no metrics/popularity).
+8. **Logout / Callback**: minimal on-brand states (quiet loading mark, "see you" tag).
+
+**Phase 3 — Polish**
+9. Reduced-motion pass, responsive (mobile-first), contrast/a11y (pink-on-black + body
+   legibility in Helvetica), remove dead V2 utilities, `next build` must pass.
+
+### Build-order rationale
+Foundation → chrome → landing (locks the visual + copy vocabulary) → app screens → polish.
+
+---
+
+## 7. Copy guardrails (quick reference while writing every string)
+
+**Sound human, not AI.** Write the way a friend with great taste actually talks. Keep it
+plain and warm. A few hard rules so it never drifts into AI-marketing cadence:
+- **No em-dashes** in product copy. Use a period, a comma, or just two sentences.
+- Skip the robotic patterns: stacked "never this, never that" lists, "it's not just X,
+  it's Y," "say goodbye to," "unlock," "elevate," "seamless," "curated experience."
+- Short sentences. Real words. If a line sounds like a landing-page template, rewrite it.
+
+Lean toward sound + taste, away from tech and trends:
+- Good ground to stand on: sounds like you, similar sound, matched on how it sounds,
+  close to your taste, put you on, songs you haven't heard yet, one drop a day.
+- Stay off: anything about embeddings, vectors, models, algorithms, or AI; and anything
+  about what's trending, popular, charting, or viral. We're the opposite of a trend feed.
+- Frame the 10/day limit as a choice, not a cap: a real recommendation instead of an
+  endless feed.
+
+## 8. Status (built 2026-06-08)
+- **Built.** Every screen + shared chrome rebuilt to the V3 "Quiet Press" direction.
+  `next build` passes (9 routes).
+- **Fonts wired** in `layout.tsx` via `next/font/local`: body → Helvetica family
+  (Light/Regular/Bold + obliques), accent → Smiley Sans, burst → Estrella. No google fonts.
+- **Design system** rebuilt in `globals.css`: pink `#E6628E` is the single signal; blue
+  `#5b75f4` + violet `#b095f8` support; lime removed; V2 textures (halftone, marquee,
+  mis-registration, tape, sticker, hard poster shadows) stripped; faint grain + one soft
+  glow kept; restrained motion (`rise`/`fade`/`draw`, no bounce/rotate).
+- **Copy** rewritten to the sound-first / no-embeddings voice across all screens; no
+  em-dashes; no popularity/trend language.
+- **Known pre-existing lint** (not from the redesign, build still passes): setState-in-effect
+  in dashboard/callback/navbar auth effects, `startPolling` hook ordering in
+  `song-rec-carousel`, and `<a href="/">` home/logo links. Left as-is to avoid refactoring
+  the auth/polling logic in a visual pass.
+- Branch: `V3-Frontend`. Work uncommitted.
