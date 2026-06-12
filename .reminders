@@ -1,2 +1,0 @@
-process_top_tracks is synchronous (uses subprocess.run for spotdl downloads) running in a FastAPI background task, which executes in the same thread pool as other sync work. This is fine for your use case, but if you ever hit concurrency issues under load, moving it to a proper task queue (Celery, ARQ) would be the next step.
-
