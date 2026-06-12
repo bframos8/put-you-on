@@ -1,6 +1,5 @@
 import os
 import time
-import traceback
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -15,16 +14,27 @@ from ...core.limiter import limiter, session_key
 router = APIRouter(prefix="/auth")
 auth_service = SpotifyAuthService()
 
+OAUTH_STATE_TTL_SECONDS = int(os.getenv("OAUTH_STATE_TTL_SECONDS", "600"))
+
 
 def get_frontend_url() -> str:
     return os.getenv("FRONTEND_URL", "https://127.0.0.1:3000/dashboard")
+
+
+def _sweep_expired_states(oauth_states: dict, now: float) -> None:
+    """Evict OAuth states older than the TTL so the dict can't grow unbounded."""
+    expired = [s for s, ts in oauth_states.items() if now - ts > OAUTH_STATE_TTL_SECONDS]
+    for s in expired:
+        del oauth_states[s]
 
 
 @router.get("/spotify/login")
 @limiter.limit("20/minute")
 async def spotify_login(request: Request):
     auth_url, state = auth_service.get_auth_url()
-    request.app.state.oauth_states[state] = time.time()
+    oauth_states = request.app.state.oauth_states
+    _sweep_expired_states(oauth_states, time.time())
+    oauth_states[state] = time.time()
     return RedirectResponse(url=auth_url)
 
 
@@ -39,15 +49,16 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
     oauth_states = request.app.state.oauth_states
     if not state or state not in oauth_states:
         return RedirectResponse(url=f"{frontend_url}?error=state_mismatch")
-    del oauth_states[state]
+    issued_at = oauth_states.pop(state)
+    if time.time() - issued_at > OAUTH_STATE_TTL_SECONDS:
+        return RedirectResponse(url=f"{frontend_url}?error=state_mismatch")
 
     try:
         token_data = await auth_service.exchange_code(code)
         profile = await auth_service.get_spotify_profile(token_data["access_token"])
         user = await auth_service.upsert_user(db, token_data, profile)
     except Exception as e:
-        print(f"ERROR Spotify callback failed: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
+        print(f"ERROR Spotify callback failed: {type(e).__name__}", flush=True)
         return RedirectResponse(url=f"{frontend_url}?error=auth_failed")
 
     response = RedirectResponse(url=frontend_url)

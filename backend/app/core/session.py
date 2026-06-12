@@ -1,7 +1,15 @@
 import os
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
-SESSION_SECRET = os.getenv("SESSION_SECRET", "dev-secret-change-in-production")
+SESSION_SECRET = os.getenv("SESSION_SECRET")
+if not SESSION_SECRET or not SESSION_SECRET.strip():
+    raise RuntimeError(
+        "SESSION_SECRET is not set. Define it in .env-backend (local) or the "
+        "environment (deploy). No default is provided because a known secret "
+        "would let anyone forge session cookies. Generate one with: "
+        'python -c "import secrets; print(secrets.token_hex(32))"'
+    )
+
 _serializer = URLSafeTimedSerializer(SESSION_SECRET)
 
 # 30 days

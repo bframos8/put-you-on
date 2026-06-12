@@ -5,6 +5,8 @@ These tests run without the HTTP layer — they call create_session /
 decode_session directly and verify the itsdangerous contract.
 """
 
+import importlib
+import os
 import time
 from unittest.mock import patch
 
@@ -113,3 +115,32 @@ class TestDecodeSession:
         """Token created right now should decode fine."""
         token = create_session(55)
         assert decode_session(token) == 55
+
+
+class TestSessionSecretRequired:
+    """The module must refuse to import without a usable SESSION_SECRET.
+
+    The guard runs at import time, so each test reloads the module with the
+    env var manipulated, then restores it so the module-global serializer is
+    rebuilt with the test secret for the rest of the suite.
+    """
+
+    def _restore(self):
+        os.environ["SESSION_SECRET"] = "test-secret-for-unit-tests-only"
+        import app.core.session as session_mod
+        importlib.reload(session_mod)
+
+    def test_import_fails_when_secret_missing(self):
+        import app.core.session as session_mod
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SESSION_SECRET", None)
+            with pytest.raises(RuntimeError, match="SESSION_SECRET"):
+                importlib.reload(session_mod)
+        self._restore()
+
+    def test_import_fails_when_secret_blank(self):
+        import app.core.session as session_mod
+        with patch.dict(os.environ, {"SESSION_SECRET": "   "}):
+            with pytest.raises(RuntimeError, match="SESSION_SECRET"):
+                importlib.reload(session_mod)
+        self._restore()

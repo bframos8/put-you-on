@@ -10,7 +10,7 @@ from sqlalchemy import func, case, or_
 import essentia
 import numpy as np
 from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from ..core.daily import today_pst
 from ..db.models import Album, Song, User, UserRecommendation, UserTopSong
@@ -86,9 +86,14 @@ class SpotifyIngestService:
     def add_user_top_songs(self, tracks: list[dict], user: User, db: Session) -> None:
         db.query(UserTopSong).filter(UserTopSong.user_id == user.id).delete()
         snapshot_at = datetime.now()
+        track_ids = [track["id"] for track in tracks]
+        existing_by_track = {
+            s.spotify_track_id: s
+            for s in db.query(Song).filter(Song.spotify_track_id.in_(track_ids)).all()
+        } if track_ids else {}
         for track in tracks:
             spotify_track_id = track["id"]
-            song = db.query(Song).filter(Song.spotify_track_id == spotify_track_id).first()
+            song = existing_by_track.get(spotify_track_id)
             db.add(UserTopSong(
                 user_id=user.id,
                 song_id=song.id if song else None,
@@ -117,9 +122,17 @@ class SpotifyIngestService:
             )
             .all()
         )
+        # Snapshot existing Songs once (track ids are unique, so no in-loop
+        # insert invalidates the snapshot) instead of one query per track.
+        track_ids = [top_song.spotify_track_id for top_song in unprocessed]
+        existing_by_track = {
+            s.spotify_track_id: s
+            for s in db.query(Song).filter(Song.spotify_track_id.in_(track_ids)).all()
+        } if track_ids else {}
+
         first_done = False
         for top_song in unprocessed:
-            existing = db.query(Song).filter(Song.spotify_track_id == top_song.spotify_track_id).first()
+            existing = existing_by_track.get(top_song.spotify_track_id)
             success = False
 
             # Fast path: an existing Song already carries a genre — reuse it.
@@ -196,7 +209,36 @@ class SpotifyIngestService:
         all_queried = result.queried == result.total
         return has_unprocessed or all_queried
 
-    def query_recommendations(self, user: User, db: Session, limit: int = 10) -> list[Song]:
+    @staticmethod
+    def _dedupe_by_artist(pool: list, limit: int) -> list[Song]:
+        # Walk the pool in similarity order, keeping the first (closest) song
+        # per artist so every dispatched rec is a different artist. Artist
+        # identity is Album.artist_id; songs without one (null) collapse to a
+        # single slot. Returns fewer than `limit` when the pool lacks enough
+        # distinct artists.
+        seen_artists = set()
+        null_used = False
+        results = []
+        for song, artist_id in pool:
+            if artist_id is None:
+                if null_used:
+                    continue
+                null_used = True
+            elif artist_id in seen_artists:
+                continue
+            else:
+                seen_artists.add(artist_id)
+            results.append(song)
+            if len(results) == limit:
+                break
+        return results
+
+    def query_recommendations(self, user: User, db: Session, limit: int = 10) -> tuple[Song, list[Song]]:
+        # Over-fetch this many candidates by similarity, then dedupe down to
+        # `limit` distinct artists. 5x leaves headroom when nearby candidates
+        # cluster on a few artists while staying cheap against the HNSW index.
+        pool_size = limit * 5
+
         query_entry = (
             db.query(UserTopSong)
             .filter(
@@ -216,8 +258,13 @@ class SpotifyIngestService:
             .subquery()
         )
 
+        # Each row carries its album's artist_id so we can dedupe by artist.
+        # outerjoin keeps album-less songs, whose null artist_id collapses to
+        # a single slot in _dedupe_by_artist.
         base_query = (
-            db.query(Song)
+            db.query(Song, Album.artist_id)
+            .outerjoin(Song.album)
+            .options(selectinload(Song.album))
             .filter(Song.is_candidate == True)
             .filter(Song.id != query_song.id)
             .filter(Song.id.not_in(already_recommended))
@@ -228,16 +275,17 @@ class SpotifyIngestService:
         # Candidate genre is derived from the album they belong to (Album.genre).
         results = []
         if query_genre:
-            results = (
+            pool = (
                 base_query
-                .join(Song.album)
                 .filter(Album.genre == query_genre)
-                .limit(limit)
+                .limit(pool_size)
                 .all()
             )
+            results = self._dedupe_by_artist(pool, limit)
 
         if len(results) < limit:
-            results = base_query.limit(limit).all()
+            pool = base_query.limit(pool_size).all()
+            results = self._dedupe_by_artist(pool, limit)
 
         dispatch_date = today_pst()
         for song in results:
@@ -254,6 +302,10 @@ class SpotifyIngestService:
     def get_todays_dispatch(self, user: User, db: Session):
         rows = (
             db.query(UserRecommendation)
+            .options(
+                selectinload(UserRecommendation.song).selectinload(Song.album),
+                selectinload(UserRecommendation.query_song),
+            )
             .filter(
                 UserRecommendation.user_id == user.id,
                 UserRecommendation.dispatch_date == today_pst(),

@@ -17,6 +17,7 @@ load_dotenv(dotenv_path=env_path)
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:8000/auth/spotify/callback")
+SPOTIFY_HTTP_TIMEOUT = float(os.getenv("SPOTIFY_HTTP_TIMEOUT", "10.0"))
 SPOTIFY_SCOPES = "user-read-email user-read-private user-top-read"
 SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
@@ -40,7 +41,7 @@ class SpotifyAuthService:
         return f"{SPOTIFY_AUTH_URL}?{urlencode(params)}", state
 
     async def exchange_code(self, code: str) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=SPOTIFY_HTTP_TIMEOUT) as client:
             response = await client.post(
                 SPOTIFY_TOKEN_URL,
                 headers={"Authorization": self._auth_header()},
@@ -54,7 +55,7 @@ class SpotifyAuthService:
             return response.json()
 
     async def get_top_tracks(self, access_token: str, limit: int = 10) -> list[dict]:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=SPOTIFY_HTTP_TIMEOUT) as client:
             response = await client.get(
                 "https://api.spotify.com/v1/me/top/tracks",
                 headers={"Authorization": f"Bearer {access_token}"},
@@ -64,7 +65,7 @@ class SpotifyAuthService:
             return response.json()["items"]
 
     async def get_spotify_profile(self, access_token: str) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=SPOTIFY_HTTP_TIMEOUT) as client:
             response = await client.get(
                 "https://api.spotify.com/v1/me",
                 headers={"Authorization": f"Bearer {access_token}"},
@@ -104,7 +105,7 @@ class SpotifyAuthService:
         if user.token_expires_at > datetime.now():
             return user
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=SPOTIFY_HTTP_TIMEOUT) as client:
             response = await client.post(
                 SPOTIFY_TOKEN_URL,
                 headers={"Authorization": self._auth_header()},
