@@ -64,6 +64,12 @@ class TestFullPipelineFlow:
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
 
+        # The real _get_albums_to_download runs UPDATE...RETURNING, so it claims a
+        # batch once and then returns [] — drain the mock the same way so the
+        # downloader terminates instead of re-claiming the same album forever.
+        albums = mock_all_external_deps['downloader_db'].execute_query.return_value
+        mock_all_external_deps['downloader_db'].execute_query.side_effect = [albums, []]
+
         with patch('data_pipeline.song_pipeline.song_downloader.DOWNLOADS_DIR', tmp_path / "downloads"), \
              patch('data_pipeline.song_pipeline.song_dbwriter.os.remove'):
             audio_queue = Queue(maxsize=32)
@@ -155,8 +161,9 @@ class TestPipelineDataIntegrity:
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
 
-        mock_all_external_deps['downloader_db'].execute_query.return_value = [
-            (999, "Unique Album Name", "Unique Artist", "http://unique.com"),
+        mock_all_external_deps['downloader_db'].execute_query.side_effect = [
+            [(999, "Unique Album Name", "Unique Artist", "http://unique.com")],
+            [],
         ]
 
         def create_single_file(*args, **kwargs):
@@ -195,9 +202,12 @@ class TestPipelineDataIntegrity:
         from data_pipeline.song_pipeline.song_embedder import SongEmbedder
         from data_pipeline.song_pipeline.song_dbwriter import SongDBWriter
 
-        mock_all_external_deps['downloader_db'].execute_query.return_value = [
-            (1, "Album One", "Artist One", "http://example.com/1"),
-            (2, "Album Two", "Artist Two", "http://example.com/2"),
+        mock_all_external_deps['downloader_db'].execute_query.side_effect = [
+            [
+                (1, "Album One", "Artist One", "http://example.com/1"),
+                (2, "Album Two", "Artist Two", "http://example.com/2"),
+            ],
+            [],
         ]
 
         call_count = [0]
