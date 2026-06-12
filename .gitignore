@@ -101,3 +101,9 @@ next-env.d.ts
 
 /reference
 /frontend/src/assets/fonts
+
+################################
+# Scratch / personal
+################################
+practice/
+.reminders

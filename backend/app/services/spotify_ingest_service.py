@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import Request
-from sqlalchemy import func, case, or_
+from sqlalchemy import func, case, or_, text
 
 import essentia
 import numpy as np
@@ -238,6 +238,19 @@ class SpotifyIngestService:
         # `limit` distinct artists. 5x leaves headroom when nearby candidates
         # cluster on a few artists while staying cheap against the HNSW index.
         pool_size = limit * 5
+
+        # P5a: pgvector's HNSW post-filters within ef_search candidates, so the
+        # default ef_search=40 under-returns when we ask for pool_size=50 (the
+        # fallback kNN came back with only 39 rows, shrinking the dedupe pool).
+        # Scope ef_search to 2x pool_size for this transaction so the pool fills.
+        # Capped here intentionally — much higher flips the genre-filtered branch
+        # to an index plan that post-filters down to a handful of rows.
+        # set_config(..., is_local=true) is the parameterizable equivalent of
+        # `SET LOCAL` (plain SET won't take a bound parameter).
+        db.execute(
+            text("SELECT set_config('hnsw.ef_search', :ef, true)"),
+            {"ef": str(pool_size * 2)},
+        )
 
         query_entry = (
             db.query(UserTopSong)
