@@ -111,4 +111,10 @@ async def get_top_tracks(
         .limit(10)
         .all()
     )
-    return TopTracksResponse(tracks=[TopTrackItem.from_user_top_song(r) for r in rows])
+    # All rows in one snapshot share a snapshot_at; max() is robust if a future
+    # change ever mixes snapshots. None when there are no rows yet.
+    last_synced_at = max((r.snapshot_at for r in rows if r.snapshot_at), default=None)
+    return TopTracksResponse(
+        tracks=[TopTrackItem.from_user_top_song(r) for r in rows],
+        last_synced_at=last_synced_at,
+    )

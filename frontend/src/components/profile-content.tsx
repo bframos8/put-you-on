@@ -31,6 +31,18 @@ function formatDuration(ms?: number | null): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function formatSyncTime(iso?: string | null): string {
+  if (!iso) return "Never";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Never";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 /**
  * The data-bound core of the profile page. This is the only part that has to run
  * on the client: it reads the session body (`/auth/me`) for the identity header
@@ -42,6 +54,7 @@ export function ProfileContent({ footer }: { footer: React.ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tracks, setTracks] = useState<TopTrack[]>([]);
+  const [lastSync, setLastSync] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hovered, setHovered] = useState<number | null>(null);
 
@@ -71,8 +84,9 @@ export function ProfileContent({ footer }: { footer: React.ReactNode }) {
         });
         if (res.ok) {
           const data = await res.json();
-          const t: TopTrack[] = (data.tracks ?? data.items ?? data) as TopTrack[];
+          const t: TopTrack[] = (data.tracks ?? []) as TopTrack[];
           if (Array.isArray(t)) setTracks(t);
+          setLastSync(data.last_synced_at ?? null);
         }
       } finally {
         setLoading(false);
@@ -156,7 +170,9 @@ export function ProfileContent({ footer }: { footer: React.ReactNode }) {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-white/40">Last sync</span>
-                    <span className="num text-lg text-[color:var(--violet)]">Just now</span>
+                    <span className="num text-lg text-[color:var(--violet)]">
+                      {formatSyncTime(lastSync)}
+                    </span>
                   </div>
                 </div>
               </div>
