@@ -108,6 +108,7 @@ class SpotifyIngestService:
                 artist_name=track["artists"][0]["name"],
                 track_title=track["name"],
                 album_title=track["album"]["name"],
+                duration_ms=track.get("duration_ms"),
                 genre=song.genre if song else None,
                 snapshot_at=snapshot_at,
             ))

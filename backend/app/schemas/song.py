@@ -54,6 +54,7 @@ class TopTrackItem(BaseModel):
             album_title=row.album_title,
             image_url=row.image_url,
             album_url=row.spotify_url,
+            duration_ms=row.duration_ms,
         )
 
 

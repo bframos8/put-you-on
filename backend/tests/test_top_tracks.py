@@ -24,6 +24,7 @@ def _make_top_song(
     album_title: str | None = "Album Title",
     image_url: str | None = "https://img.example.com/a.jpg",
     spotify_url: str | None = "https://open.spotify.com/track/abc",
+    duration_ms: int | None = None,
 ) -> MagicMock:
     row = MagicMock(spec=UserTopSong)
     row.id = id
@@ -33,6 +34,9 @@ def _make_top_song(
     row.album_title = album_title
     row.image_url = image_url
     row.spotify_url = spotify_url
+    # Set explicitly: with spec=UserTopSong, an un-set real column attribute
+    # returns an auto-child MagicMock that fails Pydantic's int | None.
+    row.duration_ms = duration_ms
     return row
 
 
@@ -129,6 +133,12 @@ class TestTopTracksHappyPath:
         track = resp.json()["tracks"][0]
         assert track["duration_ms"] is None
         assert track["popularity"] is None
+
+    def test_duration_ms_flows_through_when_present(self, client, valid_session, mock_db):
+        _stub_rows(mock_db, [_make_top_song(id=1, duration_ms=214000)])
+        resp = client.get(TOP_TRACKS_URL, cookies={"session": valid_session})
+        track = resp.json()["tracks"][0]
+        assert track["duration_ms"] == 214000
 
     def test_multiple_tracks_returned_in_order(self, client, valid_session, mock_db):
         rows = [

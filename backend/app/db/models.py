@@ -101,6 +101,7 @@ class UserTopSong(Base):
     artist_name = Column(Text)
     track_title = Column(Text)
     album_title = Column(Text)
+    duration_ms = Column(Integer)
     genre = Column(Text)
     snapshot_at = Column(DateTime, default=datetime.now)
     used_as_query = Column(Boolean, default=False, nullable=False)
