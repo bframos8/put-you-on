@@ -65,7 +65,12 @@ class SpotifyIngestService:
         )()
 
     def _embed(self, audio: np.ndarray) -> np.ndarray:
+        # Mirrors the data_pipeline SongEmbedder._embed_song guard (single
+        # source of truth by convention): raise on degenerate audio instead of
+        # returning a garbage mean. Keep this guard in sync across both apps.
         frame_embeddings = self.model(audio)
+        if not isinstance(frame_embeddings, np.ndarray) or frame_embeddings.ndim == 0 or len(frame_embeddings) == 0:
+            raise ValueError(f"Model returned no frames — audio may be too short ({len(audio) / 16000:.2f}s)")
         return frame_embeddings.mean(axis=0)
 
     def _write_to_db(self, audio_path: Path, embedding: np.ndarray, db: Session) -> Song:
