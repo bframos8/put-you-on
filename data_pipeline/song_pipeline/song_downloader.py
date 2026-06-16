@@ -11,6 +11,7 @@ from data_pipeline.db.manager import DatabaseManager
 from data_pipeline.config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
 DOWNLOADS_DIR = Path(__file__).parent / "downloads"
+AUDIO_EXTENSIONS = {'.mp3', '.flac', '.wav', '.m4a', '.ogg'}
 
 class SongDownloader(PipelineStage):
     def __init__(self, output_queue, stop_event: Event, batch_limit: int = 50):
@@ -107,10 +108,9 @@ class SongDownloader(PipelineStage):
         ])
 
         # Get all audio file paths (common formats)
-        audio_extensions = {'.mp3', '.flac', '.wav', '.m4a', '.ogg'}
         audio_file_paths = [
             f for f in album_dir.rglob("*")
-            if f.is_file() and f.suffix.lower() in audio_extensions
+            if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
         ]
 
         return audio_file_paths
