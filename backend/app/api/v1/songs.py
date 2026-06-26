@@ -99,7 +99,7 @@ async def get_recs(
 
 @router.get("/top_tracks/")
 @limiter.limit("30/minute", key_func=session_key)
-async def get_top_tracks(
+def get_top_tracks(
     request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
