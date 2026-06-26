@@ -60,6 +60,19 @@ Full plan + measurement history:
 
 ---
 
+## Tier 2 — architectural (done)
+
+The pre-launch-cheap architectural items. A1/A2 stay deferred (they add infra to the
+stack); see [backend-optimization-deferred.md](backend-optimization-deferred.md).
+
+| Item | What | Commit |
+|------|------|--------|
+| **A3** | `get_top_tracks` route `async def` → `def`, so its blocking DB query runs in the threadpool instead of on the event loop. `get_recs`/`spotify_callback` (real `await`ed Spotify I/O) and trivial in-memory routes deliberately kept async. Plan: [a3-sync-db-routes-plan.md](a3-sync-db-routes-plan.md). | `cee0aef` |
+| **A4** | Spotify tokens encrypted at rest — `EncryptedString` Fernet `TypeDecorator` on `users.spotify_access_token`/`spotify_refresh_token` (key from `TOKEN_ENCRYPTION_KEYS`, fail-fast). Migration `b8c9d0e1f2a3` nulled existing plaintext (users re-auth). **Applied to live RDS.** Plan: [a4-encrypt-spotify-tokens-plan.md](a4-encrypt-spotify-tokens-plan.md). | `04d2fdb` |
+| **A5** | Per-download `tempfile.mkdtemp` dir under `DOWNLOADS_DIR` so concurrent ingests can't grab each other's files; the whole-dir before/after diff is gone (glob scoped to the temp dir). Plan: [a5-per-download-temp-dirs-plan.md](a5-per-download-temp-dirs-plan.md). | `af6a980` |
+
+---
+
 ## Housekeeping — Batch 1 (low-risk deletions), done 2026-06-12
 
 Commits `01335bd`, `5bcb92a`, `7768256`. Source audit:
