@@ -45,6 +45,9 @@ httpx.Client.__init__ = _compat_httpx_client_init
 
 # ── 1. Inject env vars BEFORE any app module is imported ──────────────────────
 os.environ["SESSION_SECRET"] = "test-secret-for-unit-tests-only"
+# Must be a valid Fernet key and set here (module level, before the app imports
+# below) — app.core.crypto fail-fasts at import, so a fixture would be too late.
+os.environ["TOKEN_ENCRYPTION_KEYS"] = "ZJ-UK7Y6FkZCbytS15HP51yMXi1TSaACeqQDJayFvVc="
 os.environ["SPOTIFY_CLIENT_ID"] = "test_client_id"
 os.environ["SPOTIFY_CLIENT_SECRET"] = "test_client_secret"
 os.environ["FRONTEND_URL"] = "https://127.0.0.1:3000/dashboard"

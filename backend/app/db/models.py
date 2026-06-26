@@ -5,6 +5,7 @@ from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
 from .database import Base
+from .types import EncryptedString
 
 
 class WorkStatus(enum.Enum):
@@ -21,8 +22,8 @@ class User(Base):
     spotify_id = Column(Text, unique=True, nullable=False)
     display_name = Column(Text)
     email = Column(Text, unique=True)
-    spotify_access_token = Column(Text)
-    spotify_refresh_token = Column(Text)
+    spotify_access_token = Column(EncryptedString)
+    spotify_refresh_token = Column(EncryptedString)
     token_expires_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
