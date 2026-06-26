@@ -10,6 +10,47 @@
 > model ("1.5 GB table → ~550 MB row rewrite") was **wrong** — see §2b. Chosen
 > rollout: **drop the HNSW index → backfill → rebuild it** (decision below).
 
+> ⚠️ **SUPERSEDED FOR STATUS & APPROACH (2026-06-23).** The authoritative, current
+> plan for finishing P5b is
+> [backend-optimization-remaining.md](backend-optimization-remaining.md). Two changes
+> since this doc was written: (1) the sync trigger **is** installed (confirmed on live
+> RDS — see below), so step C is done; (2) the index rebuild now uses **Path A**
+> (temporarily scale RDS up → rebuild **full-vector** → scale down), which **replaces
+> the halfvec direction in §6–§7** and avoids the migration-parity + query-cast work.
+> This doc is retained for its measurement history (the §6 build-attempt log).
+
+## 0. Current status (2026-06-15, status corrected 2026-06-23) — PARTIALLY APPLIED, index rebuild outstanding
+
+> **The genre denormalization is done; the vector index is currently MISSING and
+> must be rebuilt from a stable host. The live app's recs run on seq scans until
+> then (correct, just slower — fine pre-launch).**
+
+What is **DONE on live RDS**:
+- ✅ `songs.genre` backfilled from `albums.genre` for all **110,833** candidates
+  (committed). Verified: `count(*) FILTER (is_candidate AND genre IS NOT NULL) =
+  110833`. The fast path worked: with the index dropped, backfill ran in **4.7s**.
+- ✅ `VACUUM (ANALYZE) songs` ran.
+
+What is **NOT done / regressed**:
+- ❌ **`songs_embedding_hnsw_idx` is DROPPED and not rebuilt.** Three bulk-build
+  attempts failed on this instance (see §6). Both query branches currently seq-scan.
+  **This is the #1 remaining step.**
+- ✅ **Sync trigger IS installed** (corrected 2026-06-23). Migration
+  [f6a2b3c4d5e6](../alembic/versions/f6a2b3c4d5e6_denormalize_song_genre.py) ran as a
+  side effect of `alembic upgrade head` during the later L4(a) work; live RDS confirms
+  `songs_fill_genre` on `songs` and `alembic_version = a7b8c9d0e1f2` (head). New scraper
+  candidates self-populate `songs.genre`. (This bullet originally said "not installed,"
+  written before the L4(a) upgrade ran — now stale.)
+- ❌ **Query code unchanged** — [query_recommendations](../app/services/spotify_ingest_service.py#L236)
+  still filters `Album.genre`; the per-branch `iterative_scan` + (if halfvec) the
+  `::halfvec` cast are not in.
+
+**Hard constraint discovered:** the RDS instance is tiny (~1 GB RAM: `shared_buffers`
+180 MB, `effective_cache_size` 360 MB) with slow IO. A bulk HNSW `CREATE INDEX` must
+read all **626 MB of TOASTed embeddings** off disk uncached (IO-bound floor ~20–40
+tuples/sec) **and** hold the graph in RAM (~568 MB full / ~284 MB halfvec). See §6
+for why each attempt failed and §7 for the remaining steps.
+
 ## 1. Why (measured)
 
 The genre branch filters `Album.genre` (a **joined** table), so the planner can't
@@ -213,3 +254,86 @@ edits, but confirm).
 | `backend/alembic/versions/<rev>_denormalize_song_genre.py` | **New** — idempotent backfill + `DROP TRIGGER IF EXISTS` + sync trigger (+ downgrade). |
 | [app/services/spotify_ingest_service.py](../app/services/spotify_ingest_service.py) | Genre branch filters `Song.genre`; scope `hnsw.iterative_scan` per branch. |
 | [_p5b_backfill.py](_p5b_backfill.py) | Throwaway live-DB batched backfill (run from `backend/`; delete after P5b lands). |
+| [_p5b_runbook.py](_p5b_runbook.py) | Throwaway drop→backfill→VACUUM→rebuild→validate runner. |
+| [_p5b_halfvec_rebuild.py](_p5b_halfvec_rebuild.py) | Throwaway halfvec index rebuild + validate. |
+
+## 6. Execution log — index-build attempts (2026-06-15)
+
+Three bulk `CREATE INDEX` attempts on the live ~1 GB instance, all failed to land an
+index. Genre backfill (committed before the builds) was unaffected by all of them.
+
+1. **Full-vector HNSW, parallel (mw_mem=1 GB, workers=4)** → `DiskFull`: the parallel
+   build tried to allocate a ~1 GB DSM segment in RDS's small `/dev/shm`. Aborted
+   immediately. (Lesson: no parallel build here — DSM won't fit.)
+2. **Full-vector HNSW, serial (mw_mem=512 MB, workers=0)** → effectively **stalled**.
+   Started ~189 tuples/sec, then at ~59,764 tuples (≈512 MB graph) it **spilled** to
+   the on-disk insert path and collapsed to **~0.18 tuples/sec** (233 rows in 22 min)
+   — ETA ~3 days. Graph spill + uncached source reads compounded into random-IO
+   thrash. Cancelled.
+3. **halfvec HNSW, serial (mw_mem=400 MB, workers=0)** → most promising, **but did not
+   finish.** Working set halved to ~284 MB so the graph fit (no spill); held a steady
+   **~21–37 tuples/sec**, IO-bound on `DataFileRead` (reading the 626 MB of TOASTed
+   full-precision embeddings to cast to halfvec). ETA ~35–50 min. Died at ~17–20 min
+   with the **client left hung on a dead socket** and the server backend gone. The
+   cluster did **not** restart (postmaster uptime intact → not an OOM crash); a local
+   **network/DNS blip on the laptop** severed the long, silent connection (a DNS
+   resolution failure was observed minutes later). Index left absent.
+
+**Conclusions:**
+- The dominant cost is **reading 626 MB of TOASTed embeddings off slow, uncached
+  disk** — independent of `maintenance_work_mem`. Floor ~20–40 tuples/sec → **~50–90
+  min** even when nothing spills.
+- **halfvec is the right footprint** (graph fits in RAM, no spill, steady rate); full
+  vector spills and collapses.
+- The build **cannot be driven from the laptop** — a single silent ~hour-long
+  connection won't survive sleep/NAT/DNS. It must run from a **stable host** with TCP
+  keepalives.
+- The original index almost certainly grew **incrementally** via scraper inserts over
+  time; there is no cheap one-shot equivalent on this instance.
+
+## 7. Remaining steps (resume here)
+
+**A. Rebuild the vector index (blocker).** Run from a **stable host** (small EC2 in
+the same VPC, or any always-on box), not the laptop. Recommended:
+- **halfvec HNSW**, serial, **`maintenance_work_mem` ~256–300 MB** (lower than the
+  400 MB used in attempt 3, to stay clear of the instance's memory ceiling; the ~284
+  MB graph still fits), `max_parallel_maintenance_workers = 0`.
+- Set TCP keepalives on the connection (`keepalives=1 keepalives_idle=60
+  keepalives_interval=15 keepalives_count=5`) and run under `nohup`/`screen` so a
+  client hiccup can't roll it back. Expect **~50–90 min**.
+- SQL: `CREATE INDEX songs_embedding_hnsw_idx ON songs USING hnsw
+  ((embedding::halfvec(1280)) halfvec_cosine_ops);` then `ANALYZE songs;`
+- Gate with the §3 EXPLAIN, but **ORDER BY `embedding::halfvec(1280) <=>
+  q::halfvec(1280)`** (must match the index expression) — confirm Index Scan + 50 rows.
+- _Alternatives if halfvec recall is unacceptable or the build still won't hold:_
+  (i) temporarily scale the RDS instance up, bulk-build full-vector in minutes, scale
+  back; (ii) IVFFlat (cheaper, lower-memory build; different `probes` tuning;
+  supports `ivfflat.iterative_scan` in 0.8). Both are bigger detours than halfvec.
+
+**B. Adopt halfvec consistently (if A uses halfvec).** The query must use the index
+expression or the planner ignores the index:
+- [query_recommendations](../app/services/spotify_ingest_service.py#L236): order by
+  `Song.embedding` cast to `halfvec(1280)` against the seed cast the same way, on
+  **both** the genre and fallback branches.
+- **Migration parity:** the index is currently defined by
+  [d9e1f3a4b205](../alembic/versions/d9e1f3a4b205_add_hnsw_index_songs_embedding.py)
+  as `vector_cosine_ops`. For fresh DBs to match live, either edit that migration or
+  add a new one that builds the **halfvec** index (fresh-DB builds are on an empty
+  table, so no perf concern). Keep the index **name** stable.
+
+**C. Install the sync trigger.** `cd backend && alembic upgrade head` applies
+[f6a2b3c4d5e6](../alembic/versions/f6a2b3c4d5e6_denormalize_song_genre.py): the
+backfill `UPDATE` is a no-op (already filled) and it creates `songs_fill_genre`. After
+this, scraper-inserted candidates self-populate `songs.genre`.
+
+**D. Land the query change (§2c).** Filter `Song.genre == query_genre`, scope
+`hnsw.iterative_scan='relaxed_order'` to the genre branch (reset before the fallback).
+`ef_search=2*pool_size` is already set by P5a.
+
+**E. Validate + clean up.** Re-run the EXPLAIN gate (committed), run `pytest`, then
+`git rm` the throwaway `_p5b_*.py` scripts.
+
+> Note: the **genre denormalization goal is already achieved on live data** (A/C/D
+> make the genre branch *fast*; without them the app is correct but seq-scans). If
+> deprioritized, the safe interim state is: keep seq scans, but still do **C** soon so
+> newly scraped candidates don't accumulate with NULL `songs.genre`.
