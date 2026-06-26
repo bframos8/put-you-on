@@ -1,5 +1,7 @@
 import os
+import shutil
 import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -42,22 +44,33 @@ class SpotifyIngestService:
         return song
 
     def _download(self, spotify_url: str) -> Path:
-        before = set(DOWNLOADS_DIR.rglob("*"))
-        subprocess.run(
-            ["spotdl", "--no-cache", "--format", "mp3", "--bitrate", "320k",
-            "--client-id", os.getenv("SPOTIFY_CLIENT_ID"),
-            "--client-secret", os.getenv("SPOTIFY_CLIENT_SECRET"),
-            "--output", str(DOWNLOADS_DIR),
-            spotify_url],
-            check=True,
-        )
-        new_files = [
-            f for f in DOWNLOADS_DIR.rglob("*")
-            if f not in before and f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
-        ]
-        if not new_files:
-            raise FileNotFoundError(f"spotdl produced no audio file for {spotify_url}")
-        return new_files[0]
+        # Each download gets its own temp dir under DOWNLOADS_DIR so concurrent
+        # ingests can't pick up each other's files (mkdtemp is atomic/unique).
+        # Because the dir starts empty, we find our file by globbing only it — no
+        # whole-DOWNLOADS_DIR before/after diff. An empty result still means the
+        # download produced no audio (the old line-58 success check).
+        job_dir = Path(tempfile.mkdtemp(prefix="ingest_", dir=DOWNLOADS_DIR))
+        try:
+            subprocess.run(
+                ["spotdl", "--no-cache", "--format", "mp3", "--bitrate", "320k",
+                "--client-id", os.getenv("SPOTIFY_CLIENT_ID"),
+                "--client-secret", os.getenv("SPOTIFY_CLIENT_SECRET"),
+                "--output", str(job_dir),
+                spotify_url],
+                check=True,
+            )
+            audio_files = [
+                f for f in job_dir.rglob("*")
+                if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+            ]
+            if not audio_files:
+                raise FileNotFoundError(f"spotdl produced no audio file for {spotify_url}")
+            return audio_files[0]
+        except Exception:
+            # Callers only _cleanup a returned path, so a failed download must
+            # clean up its own temp dir here or it leaks.
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise
 
     def _load_audio(self, audio_path: Path) -> np.ndarray:
         return MonoLoader(
@@ -85,6 +98,16 @@ class SpotifyIngestService:
         return song
 
     def _cleanup(self, audio_path: Path) -> None:
+        # Remove the per-download temp dir (the direct child of DOWNLOADS_DIR that
+        # _download created), so spotdl's stray files go too. Guard hard against
+        # ever rmtree-ing DOWNLOADS_DIR itself; fall back to file-only removal.
+        try:
+            top = DOWNLOADS_DIR / audio_path.relative_to(DOWNLOADS_DIR).parts[0]
+            if top != DOWNLOADS_DIR and top.is_dir():
+                shutil.rmtree(top, ignore_errors=True)
+                return
+        except (ValueError, IndexError):
+            pass
         if audio_path.exists():
             os.remove(audio_path)
 
