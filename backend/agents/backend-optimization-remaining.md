@@ -2,33 +2,17 @@
 
 > **Source of truth for what's left, in priority order.** Companions:
 > [backend-optimization-completed.md](backend-optimization-completed.md) and
-> [backend-optimization-deferred.md](backend-optimization-deferred.md) (A1, A2, P1/P2,
+> [backend-optimization-deferred.md](backend-optimization-deferred.md) (A1, A2, A7, P1/P2,
 > Observability Phase 1).
 >
-> **Order: A7 → P6 → P5b** (A6 shipped 2026-07-09, `375e54c` — see completed).
-> Each item gets its own per-item plan markdown + an agent verification before any code
-> (the established workflow). A7/P6 below are scoped summaries; **P5b already has a
-> full plan** (Path A) because its work was already in flight.
+> **Order: P6 → P5b** (A6 shipped 2026-07-09, `375e54c`; A7 deferred 2026-07-09 — both
+> see the respective files). Each item gets its own per-item plan markdown + an agent
+> verification before any code (the established workflow). P6 below is a scoped summary;
+> **P5b already has a full plan** (Path A) because its work was already in flight.
 
 ---
 
-## 1. A7 — server-side session revocation  *(next)*
-
-**What:** `itsdangerous` session tokens are valid for 30 days regardless of logout
-([auth.py:82-87](../app/api/v1/auth.py#L82)); logout only clears the client cookie, so a
-leaked token can't be revoked.
-
-**Direction:** add a `session_version` (or similar) on `User`, bake it into the token,
-and check it per request — bumping it invalidates all existing sessions. **Tradeoff:**
-gives up pure statelessness for one DB read per request (decide if revocation is worth
-that). **Effort:** S–M.
-
-**Status:** queued — plan + agent-verify first; confirm the statelessness tradeoff is
-wanted before implementing.
-
----
-
-## 2. P6 — drop `create_all`; make Alembic the single schema authority
+## 1. P6 — drop `create_all`; make Alembic the single schema authority  *(next)*
 
 **What:** [main.py:25](../app/main.py#L25) runs `Base.metadata.create_all` at boot, but
 **no migration runs `op.create_table`** for the six base tables — the root
@@ -46,7 +30,7 @@ the already-deployed RDS so its history stays consistent, **then** remove `creat
 
 ---
 
-## 3. P5b — finish the genre-filtered kNN index  *(last — ops-gated)*
+## 2. P5b — finish the genre-filtered kNN index  *(last — ops-gated)*
 
 > P5b is last because its blocker is an **ops step** (an RDS scale-up + ~hour index
 > build), not code. The remaining-detail/runbook below is authoritative; the older

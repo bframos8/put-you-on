@@ -3,10 +3,10 @@
 > **Source of truth for work consciously parked** (not abandoned). Companions:
 > [backend-optimization-completed.md](backend-optimization-completed.md) and
 > [backend-optimization-remaining.md](backend-optimization-remaining.md) (the active,
-> ordered queue: **A6 → A7 → P6 → P5b**).
+> ordered queue: **P6 → P5b**).
 >
-> **Updated 2026-06-26:** A3/A4/A5 shipped → completed; A6/A7/P6/P5b moved to the
-> remaining queue. What stays parked here: **A1, A2, P1/P2, and Observability Phase 1.**
+> **Updated 2026-07-09:** A3/A4/A5/A6 shipped → completed; A7 deferred (auth is a later
+> workstream). What stays parked here: **A1, A2, A7, P1/P2, and Observability Phase 1.**
 >
 > Each entry states **why** it's deferred and the **trigger to revisit**.
 
@@ -46,6 +46,24 @@ job; the existing `/status` poll reads job state. Also unblocks A1's `processing
 (job state becomes the source of truth) and A5's isolation at the job level.
 
 **Trigger to revisit:** when ingest reliability/observability matters, or before scaling.
+
+---
+
+## A7 — server-side session revocation
+
+**What:** `itsdangerous` session tokens are valid for 30 days regardless of logout
+([auth.py:82-87](../app/api/v1/auth.py#L82)); logout only clears the client cookie, so a
+leaked token can't be revoked server-side.
+
+**Why deferred (user decision, 2026-07-09):** auth is a later workstream. The fix also
+carries a real tradeoff — it gives up the stateless-session model for one DB read per
+request.
+
+**Direction:** add a `session_version` on `User`, bake it into the token, and check it
+per request; bumping it invalidates all existing sessions. **Effort:** S–M.
+
+**Trigger to revisit:** when tackling auth hardening (and if revocation is judged worth
+the per-request DB read).
 
 ---
 
