@@ -2,11 +2,12 @@
 
 > **Source of truth for work consciously parked** (not abandoned). Companions:
 > [backend-optimization-completed.md](backend-optimization-completed.md) and
-> [backend-optimization-remaining.md](backend-optimization-remaining.md) (the active,
-> ordered queue: **P6 → P5b**).
+> [backend-optimization-remaining.md](backend-optimization-remaining.md) (the active
+> queue: **P5b** only).
 >
 > **Updated 2026-07-09:** A3/A4/A5/A6 shipped → completed; A7 deferred (auth is a later
-> workstream). What stays parked here: **A1, A2, A7, P1/P2, and Observability Phase 1.**
+> workstream); P6 deferred (folds into deploy hardening / Phase 1.2). What stays parked
+> here: **A1, A2, A7, P6, P1/P2, and Observability Phase 1.**
 >
 > Each entry states **why** it's deferred and the **trigger to revisit**.
 
@@ -85,6 +86,28 @@ byte-for-byte equivalence. Moderate benefit on a background path doesn't justify
 **Trigger to revisit:** when ingest moves to a real queue (A2) **and** a committed
 numerical-equivalence test exists (synthetic audio, ~0 max-abs-diff for both heads).
 Build the test infra first — it's the actual prerequisite.
+
+---
+
+## P6 — drop `create_all`; make Alembic the single schema authority
+
+**What:** [main.py:25](../app/main.py#L25) runs `Base.metadata.create_all` at boot, but no
+migration runs `op.create_table` for the six base tables (the root
+[ad1aecf9f82f](../alembic/versions/ad1aecf9f82f_initial_schema.py) only `add_column`s onto
+an already-existing table). So `create_all` is load-bearing for fresh DBs and silently
+diverges prod from the models (can't add indexes, alter columns, or build the HNSW index).
+
+**Why deferred (user decision, 2026-07-09):** fold it into the deploy-hardening
+workstream rather than standalone — it's the same work as **deployment-gameplan Phase
+1.2** (which wraps it with an `alembic revision --autogenerate` drift diff), and it's the
+highest-risk item so far (touches migration history on the live RDS).
+
+**Direction:** author a baseline `op.create_table` migration (the new root the existing
+chain builds onto), add an explicit `alembic upgrade head` deploy step, `alembic stamp`
+the deployed RDS so its history stays consistent, **then** remove `create_all`.
+**Effort:** M.
+
+**Trigger to revisit:** when starting production deploy hardening (Phase 1.2).
 
 ---
 
