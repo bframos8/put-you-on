@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import Request
-from sqlalchemy import func, case, or_, text
+from sqlalchemy import func, or_, text
 
 import essentia
 import numpy as np
@@ -226,17 +226,18 @@ class SpotifyIngestService:
             return False
 
     def snapshot_is_stale(self, user: User, db: Session) -> bool:
+        # "Stale" means the snapshot needs a (re)build — it's empty, or a prior
+        # ingest didn't finish processing every row. Pool exhaustion (all rows
+        # used as query seeds) is deliberately NOT stale: query_recommendations
+        # recycles the existing candidates instead of re-fetching from Spotify (A6).
         result = db.query(
             func.count().label("total"),
             func.count(UserTopSong.song_id).label("processed"),
-            func.sum(case((UserTopSong.used_as_query == True, 1), else_=0)).label("queried"),
         ).filter(UserTopSong.user_id == user.id).one()
 
         if result.total == 0:
             return True
-        has_unprocessed = result.processed < result.total
-        all_queried = result.queried == result.total
-        return has_unprocessed or all_queried
+        return result.processed < result.total
 
     @staticmethod
     def _dedupe_by_artist(pool: list, limit: int) -> list[Song]:
@@ -290,6 +291,25 @@ class SpotifyIngestService:
             )
             .first()
         )
+        if query_entry is None:
+            # A6: every processed candidate has already been a query seed. Recycle
+            # them — reset used_as_query so the pool can be walked again — instead of
+            # re-fetching from Spotify and rebuilding the snapshot. The re-pick is
+            # intentionally order-agnostic: already_recommended (below) dedupes prior
+            # recs, so reusing a seed still yields a distinct dispatch.
+            db.query(UserTopSong).filter(
+                UserTopSong.user_id == user.id,
+                UserTopSong.song_id != None,
+            ).update({UserTopSong.used_as_query: False}, synchronize_session=False)
+            query_entry = (
+                db.query(UserTopSong)
+                .filter(
+                    UserTopSong.user_id == user.id,
+                    UserTopSong.song_id != None,
+                    UserTopSong.used_as_query == False,
+                )
+                .first()
+            )
         query_song = query_entry.song
         query_genre = query_entry.genre
         query_entry.used_as_query = True

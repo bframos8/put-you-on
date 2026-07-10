@@ -229,3 +229,53 @@ class TestGenreFilteringUsesQueryEntryGenre:
 
         _, results = run(svc, db)
         assert results == [a, c]
+
+
+class TestRecycleWhenExhausted:
+    """A6: when every processed candidate has been used as a query seed,
+    query_recommendations recycles them (reset used_as_query) instead of
+    leaving no seed — no re-fetch/rebuild."""
+
+    def test_recycles_seeds_when_all_used(self):
+        svc = make_service()
+        query_song = make_song(1)
+        entry = make_query_entry(genre=None, song=query_song)
+        db = make_db(entry, fallback_pool=[(make_song(2), 7)])
+
+        # First seed select finds nothing (all rows already queried); after the
+        # recycle reset, the re-pick returns the recycled entry.
+        uts_chain = db.query(UserTopSong)
+        uts_chain.filter.return_value.first.side_effect = [None, entry]
+
+        returned_song, _ = run(svc, db)
+
+        # It issued the bulk reset (the recycle) and then proceeded normally.
+        uts_chain.filter.return_value.update.assert_called_once()
+        assert returned_song is query_song
+        assert entry.used_as_query is True
+
+
+class TestSnapshotIsStale:
+    """A6: pool exhaustion is no longer 'stale' — only empty or unfinished."""
+
+    def _db(self, total, processed):
+        db = MagicMock()
+        row = MagicMock()
+        row.total = total
+        row.processed = processed
+        db.query.return_value.filter.return_value.one.return_value = row
+        return db
+
+    def test_empty_snapshot_is_stale(self):
+        svc = make_service()
+        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(0, 0)) is True
+
+    def test_unprocessed_rows_are_stale(self):
+        svc = make_service()
+        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 7)) is True
+
+    def test_all_processed_and_queried_is_not_stale(self):
+        # Formerly all_queried → stale (rebuild). Now it's not stale; the seed
+        # pool is recycled by query_recommendations instead.
+        svc = make_service()
+        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 10)) is False
