@@ -5,31 +5,14 @@
 > [backend-optimization-deferred.md](backend-optimization-deferred.md) (A1, A2, P1/P2,
 > Observability Phase 1).
 >
-> **Order (set 2026-06-26): A6 → A7 → P6 → P5b.**
+> **Order: A7 → P6 → P5b** (A6 shipped 2026-07-09, `375e54c` — see completed).
 > Each item gets its own per-item plan markdown + an agent verification before any code
-> (the established workflow). A6/A7/P6 below are scoped summaries; **P5b already has a
+> (the established workflow). A7/P6 below are scoped summaries; **P5b already has a
 > full plan** (Path A) because its work was already in flight.
 
 ---
 
-## 1. A6 — stop unnecessary re-ingest churn  *(next)*
-
-**What:** [snapshot_is_stale](../app/services/spotify_ingest_service.py#L205-L216)
-returns stale once `all_queried`, which triggers a fresh Spotify top-tracks fetch and a
-full `UserTopSong` rebuild (DELETE + re-insert) just to refill query candidates. It
-rarely re-downloads/re-embeds (existing `Song`s are reused by `spotify_track_id` and
-their genre copied), so the real waste is an **unnecessary Spotify call + row churn**
-every cycle. Severity: minor.
-
-**Direction:** when the Spotify snapshot is unchanged, reset `used_as_query=False` to
-**cycle the existing candidates** instead of rebuilding; only re-fetch when the snapshot
-actually changed. **Effort:** S.
-
-**Status:** queued — write `a6-*-plan.md`, agent-verify, then implement.
-
----
-
-## 2. A7 — server-side session revocation
+## 1. A7 — server-side session revocation  *(next)*
 
 **What:** `itsdangerous` session tokens are valid for 30 days regardless of logout
 ([auth.py:82-87](../app/api/v1/auth.py#L82)); logout only clears the client cookie, so a
@@ -45,7 +28,7 @@ wanted before implementing.
 
 ---
 
-## 3. P6 — drop `create_all`; make Alembic the single schema authority
+## 2. P6 — drop `create_all`; make Alembic the single schema authority
 
 **What:** [main.py:25](../app/main.py#L25) runs `Base.metadata.create_all` at boot, but
 **no migration runs `op.create_table`** for the six base tables — the root
@@ -63,7 +46,7 @@ the already-deployed RDS so its history stays consistent, **then** remove `creat
 
 ---
 
-## 4. P5b — finish the genre-filtered kNN index  *(last — ops-gated)*
+## 3. P5b — finish the genre-filtered kNN index  *(last — ops-gated)*
 
 > P5b is last because its blocker is an **ops step** (an RDS scale-up + ~hour index
 > build), not code. The remaining-detail/runbook below is authoritative; the older
