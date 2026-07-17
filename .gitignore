@@ -107,3 +107,7 @@ next-env.d.ts
 ################################
 practice/
 .reminders
+
+# Claude Dev Files
+backend/agents
+frontend/agent-handoffs-FE

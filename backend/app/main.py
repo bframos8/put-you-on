@@ -16,7 +16,7 @@ from .core.daily import DAILY_LIMIT_BYPASS
 from .db.database import engine
 from .db.models import Base
 from .services.spotify_ingest_service import SpotifyIngestService
-from .api.v1 import auth, songs
+from .api.v1 import auth, health, songs
 from .core.limiter import limiter
 
 
@@ -88,5 +88,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+app.include_router(health.router)
 app.include_router(auth.router, prefix = "/api/v1")
 app.include_router(songs.router, prefix = "/api/v1")

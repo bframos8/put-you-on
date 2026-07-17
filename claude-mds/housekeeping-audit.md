@@ -6,32 +6,39 @@
 **Out of scope this pass:** security & secrets, functional bugs/correctness
 **Excluded:** uncommitted WIP (`backend/agents/_p5b_*.py`, `*-plan.md`, `h1-*`, deleted `backend/app/models/models.py`), virtualenvs, `node_modules`, build output
 
-> **Audit only.** Nothing here has been changed. Every "How to resolve" is a non-breaking
-> refactor or a deletion of verified-dead code. The one item that touches git history (H2)
-> is flagged as *handle with care* — do not run it blind.
+> **Audit only.** Every "How to resolve" is a non-breaking refactor or a deletion of
+> verified-dead code. The one item that touches git history (H2) is flagged as
+> *handle with care* — do not run it blind.
 >
 > Findings were independently fact-checked by a second agent; verdicts noted per item.
+>
+> **Progress (2026-06-12):** Batch 1 — low-risk deletions — **done**: ✅ M2, ✅ M3,
+> ✅ M6, ✅ L2 (see resolution lines per item). Committed in `01335bd` + `5bcb92a`.
+> Two follow-on **test fixes** surfaced while applying Batch 1 (both expected — a
+> deleted method had test coverage, and three integration tests had an unrealistic
+> mock): see the **Test fixes from Batch 1** section below. Remaining: Batch 2
+> (H1, M1, M4, M5), Batch 3 (H3 + L5), and the policy calls (H2, L1, L3).
 
 ---
 
 ## Summary
 
-| #  | Flag | Area | Priority |
-|----|------|------|----------|
-| H1 | Embedding model graph loaded into memory **twice** in the backend process | backend | High |
-| H2 | 18 MB ML model binary committed to git **twice** (~36 MB tracked) | repo-wide | High* |
-| H3 | `print()` used for logging everywhere (no levels, can't silence) | backend + pipeline | High |
-| M1 | Audio-load + embed logic duplicated across backend and pipeline | backend + pipeline | Medium |
-| M2 | Dead "legacy" `Song` dataclass (only its own test uses it) | pipeline | Medium |
-| M3 | Two orphan frontend UI components (~369 dead lines) | frontend | Medium |
-| M4 | `DatabaseManager` validation boilerplate + inconsistent error handling | pipeline | Medium |
-| M5 | `AUDIO_EXTENSIONS` set duplicated in two files | backend + pipeline | Medium |
-| M6 | Crawler writes `resp.json` on every response + commented-out dead code | pipeline | Medium |
-| L1 | Raw f-string SQL in `_get_albums_to_download` (inconsistent with rest) | pipeline | Low |
-| L2 | `practice/` scratch dir + `.reminders` tracked in git | repo-wide | Low |
-| L3 | Stale agent/handoff/reference artifacts tracked | repo-wide | Low |
-| L4 | Profile page renders dead fields (`duration_ms` always `—:—`, hardcoded "Just now") | frontend | Low |
-| L5 | Misspelling "succesfully" in two files | pipeline | Low |
+| #  | Flag | Area | Priority | Status |
+|----|------|------|----------|--------|
+| H1 | Embedding model graph loaded into memory **twice** in the backend process | backend | High | Open (Batch 2) |
+| H2 | 18 MB ML model binary committed to git **twice** (~36 MB tracked) | repo-wide | High* | Open (policy call) |
+| H3 | `print()` used for logging everywhere (no levels, can't silence) | backend + pipeline | High | Open (Batch 3) |
+| M1 | Audio-load + embed logic duplicated across backend and pipeline | backend + pipeline | Medium | Open (Batch 2) |
+| M2 | Dead "legacy" `Song` dataclass (only its own test uses it) | pipeline | Medium | ✅ Done |
+| M3 | Two orphan frontend UI components (~369 dead lines) | frontend | Medium | ✅ Done |
+| M4 | `DatabaseManager` validation boilerplate + inconsistent error handling | pipeline | Medium | Open (Batch 2) |
+| M5 | `AUDIO_EXTENSIONS` set duplicated in two files | backend + pipeline | Medium | Open (Batch 2) |
+| M6 | Crawler writes `resp.json` on every response + commented-out dead code | pipeline | Medium | ✅ Done |
+| L1 | Raw f-string SQL in `_get_albums_to_download` (inconsistent with rest) | pipeline | Low | Open (policy call) |
+| L2 | `practice/` scratch dir + `.reminders` tracked in git | repo-wide | Low | ✅ Done |
+| L3 | Stale agent/handoff/reference artifacts tracked | repo-wide | Low | Open (policy call) |
+| L4 | Profile page renders dead fields (`duration_ms` always `—:—`, hardcoded "Just now") | frontend | Low | Open |
+| L5 | Misspelling "succesfully" in two files | pipeline | Low | Open (Batch 3) |
 
 \* H2 priority is high by impact, but the fix touches git history — see the caution note.
 
@@ -76,14 +83,22 @@
 **How to resolve:** Extract a small shared `embedding` helper (load + mean-pool + the empty-frame guard) and have both call it. Note the two apps are separate deploy units with separate venvs, so a literal shared import may need a tiny shared module or copy-with-a-single-source-of-truth; at minimum unify the guard and the `GRAPH_FILE` constant.
 **Priority:** Medium.
 
-### M2 — Dead "legacy" `Song` dataclass
+### M2 — Dead "legacy" `Song` dataclass ✅ DONE (2026-06-12)
+**Resolution:** Deleted the `Song` dataclass from `datamodels.py` and its self-referential
+`TestSong` class from `tests/tools/test_datamodels.py` (and dropped `Song` from that file's
+import). `datamodels` test suite: 9 passed.
 **Where:** [data_pipeline/models/datamodels.py:26-33](data_pipeline/models/datamodels.py#L26-L33)
 **What:** `Song` is self-labeled *"Legacy song dataclass - kept for compatibility"* and is used by **no production code**. The only reference is `data_pipeline/tests/tools/test_datamodels.py::TestSong`, a test that exists solely to exercise this class. *(Verified: PARTIALLY TRUE — unused in production, but a self-referential test exists.)*
 **Why it's a flag:** Dead code kept alive by a dead test; misleads readers into thinking it's load-bearing.
 **How to resolve:** Confirm no external/notebook usage, then delete the `Song` dataclass and its `TestSong` test together.
 **Priority:** Medium.
 
-### M3 — Orphan frontend UI components (~369 dead lines)
+### M3 — Orphan frontend UI components (~369 dead lines) ✅ DONE (2026-06-12)
+**Resolution:** `git rm`'d both files (zero importers confirmed). `package.json` left
+untouched by design — `radix-ui` / `motion/react` are shared meta-packages used by other
+components. **Follow-up flagged:** `react-use-measure` is now an orphaned dependency (was
+only used by `infinite-slider.tsx`); removing it means lockfile churn, deferred out of a
+deletions batch.
 **Where:** [frontend/src/components/ui/dropdown-menu.tsx](frontend/src/components/ui/dropdown-menu.tsx) (257 lines), [frontend/src/components/ui/infinite-slider.tsx](frontend/src/components/ui/infinite-slider.tsx) (112 lines)
 **What:** Neither component is imported anywhere under `frontend/src`. *(Verified: CONFIRMED — zero importers.)*
 **Why it's a flag:** Dead components carry their own deps (e.g. Radix) and noise into the bundle/mental model.
@@ -104,7 +119,11 @@
 **How to resolve:** Promote to one module-level constant per app (each app is independent), or a shared config. Minimal change.
 **Priority:** Medium-low.
 
-### M6 — Crawler writes `resp.json` on every response + commented-out dead code
+### M6 — Crawler writes `resp.json` on every response + commented-out dead code ✅ DONE (2026-06-12)
+**Resolution:** Removed `_save_resp` entirely (per decision — not gated behind a debug
+flag), its call site, the dead commented-out block in `_check_session`, and the now-unused
+`import json`. **Test fallout (expected):** `_save_resp` had direct + indirect test coverage
+— see **Test fixes from Batch 1** below. `link_pipeline` suite: 57 passed.
 **Where:** [data_pipeline/link_pipeline/crawler.py:126-128](data_pipeline/link_pipeline/crawler.py#L126-L128) (`_save_resp`, called from line 111) and [crawler.py:120-124](data_pipeline/link_pipeline/crawler.py#L120-L124) (`_check_session` dead comments)
 **What:** `_save_resp` dumps the latest payload to `resp.json` on every OK API response — a debugging artifact left in the hot path. `_check_session` is a `print` plus a commented-out loop. *(Verified: CONFIRMED.)*
 **Why it's a flag:** Per-response disk write for no production purpose; vestigial method with dead comments.
@@ -122,7 +141,9 @@
 **How to resolve:** Pass `batch_limit` as a bound parameter, matching `manager.py`.
 **Priority:** Low.
 
-### L2 — `practice/` scratch dir and `.reminders` tracked in git
+### L2 — `practice/` scratch dir and `.reminders` tracked in git ✅ DONE (2026-06-12)
+**Resolution:** `git rm --cached .reminders practice/test.py` (untracked, kept on disk per
+decision) and added `practice/` + `.reminders` to `.gitignore`.
 **Where:** `practice/test.py` (tracked), `.reminders` (tracked). *(Verified: PARTIALLY TRUE — `practice/resp.json` and `backend/agents/_p5b_runbook.log` are on disk but NOT tracked.)*
 **What:** A scratch `test.py` and a personal `.reminders` file are committed to the repo.
 **Why it's a flag:** Personal/scratch files in version control add noise and confuse contributors about what's load-bearing.
@@ -151,9 +172,35 @@
 
 ---
 
+## Test fixes from Batch 1
+
+Two test failures surfaced while applying the Batch-1 deletions. Both were expected
+consequences, and both were fixed; the full `data_pipeline` suite is **172 passed**.
+
+- **Crawler tests (caused by M6).** Removing `_save_resp` broke 5 tests in
+  [test_bandcamp_crawler.py](data_pipeline/tests/link_pipeline/test_bandcamp_crawler.py):
+  `TestSaveResp` tested the deleted method directly, and four `TestOnResponse` tests
+  mocked it via `patch.object(crawler, '_save_resp')`. Fixed by deleting `TestSaveResp`,
+  dropping the obsolete mock from the four `_on_response` tests (they still assert real
+  behavior), and trimming the now-unused `patch`/`call` imports.
+
+- **Pipeline integration tests (pre-existing, unrelated to Batch 1).** Three tests in
+  [test_pipeline_integration.py](data_pipeline/tests/song_pipeline/test_pipeline_integration.py)
+  were already failing on `372f5af` (verified before any change) with `len(rows) == 16`
+  instead of 1/2. Root cause: the downloader loops until `_get_albums_to_download()`
+  returns `[]`, but the tests mocked `execute_query` with a **static `return_value`**, so
+  it never drained — the real query is `UPDATE...RETURNING`, which claims a batch once and
+  then returns `[]`. The downloader looped forever, emitting full `batch_size=16` buffers.
+  Fixed by making the mock drain (`execute_query.side_effect = [albums, []]`) in the three
+  tests. Production code was correct; the mock was unrealistic. Side benefit: the suite
+  dropped from ~3m41s to ~1.2s (those three were spinning until their 5s join timeouts).
+
+---
+
 ## Suggested order of attack
 
-1. **Low-risk deletions first** (M2, M3, M6 dead code, L2) — pure removal, easy to verify with a build/test run.
-2. **Mechanical refactors** (H1 single model load, M1/M5 dedupe, M4 validation helper) — behavior-preserving, test-backed.
+1. ✅ **Low-risk deletions** (M2, M3, M6, L2) — **done** (commits `01335bd` + `5bcb92a`;
+   test fixes above). Pure removals, verified with the `data_pipeline` test run.
+2. **Mechanical refactors** (H1 single model load, M1/M5 dedupe, M4 validation helper) — behavior-preserving, test-backed. ← next
 3. **The logging migration** (H3 + L5) — staged file-by-file.
 4. **Decide policy** on H2 (LFS vs gitignore vs history purge) and L3/L1 — these need a judgment call, not a blind fix.
