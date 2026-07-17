@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 import json
 
 from data_pipeline.link_pipeline.crawler import BandcampCrawler
@@ -19,8 +19,7 @@ class TestOnResponse:
             "items": [{"item_id": 1}, {"item_id": 2}]
         }
 
-        with patch.object(crawler, '_save_resp'):
-            crawler._on_response(mock_resp)
+        crawler._on_response(mock_resp)
 
         assert len(crawler.discover_payloads) == 2
 
@@ -32,8 +31,7 @@ class TestOnResponse:
             "results": [{"item_id": 10}, {"item_id": 11}, {"item_id": 12}]
         }
 
-        with patch.object(crawler, '_save_resp'):
-            crawler._on_response(mock_resp)
+        crawler._on_response(mock_resp)
 
         assert len(crawler.discover_payloads) == 3
 
@@ -63,9 +61,8 @@ class TestOnResponse:
         mock_resp.ok = True
         mock_resp.json.side_effect = ValueError("not JSON")
 
-        with patch.object(crawler, '_save_resp'):
-            # Should not raise
-            crawler._on_response(mock_resp)
+        # Should not raise
+        crawler._on_response(mock_resp)
 
         assert len(crawler.discover_payloads) == 0
 
@@ -75,8 +72,7 @@ class TestOnResponse:
             mock_resp.url = "/api/discover/3/discover_web"
             mock_resp.ok = True
             mock_resp.json.return_value = {"items": [{"item_id": i}]}
-            with patch.object(crawler, '_save_resp'):
-                crawler._on_response(mock_resp)
+            crawler._on_response(mock_resp)
 
         assert len(crawler.discover_payloads) == 3
 
@@ -92,18 +88,6 @@ class TestGetDiscoverPayloads:
 
         assert len(result) == 2
         assert result[0]["item_id"] == 1
-
-
-class TestSaveResp:
-    def test_save_resp_writes_json_to_file(self, crawler, tmp_path):
-        data = {"items": [{"item_id": 1}]}
-
-        with patch('builtins.open', create=True) as mock_open:
-            mock_file = MagicMock()
-            mock_open.return_value.__enter__.return_value = mock_file
-            crawler._save_resp(data)
-
-        mock_open.assert_called_once_with("resp.json", 'w')
 
 
 class TestPrintTimingStats:

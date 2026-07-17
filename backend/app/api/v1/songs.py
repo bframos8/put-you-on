@@ -19,7 +19,14 @@ def _run_process_top_tracks(user_id: int, ingest_service: SpotifyIngestService, 
         from ...db.models import User as UserModel
         user = db.query(UserModel).filter(UserModel.id == user_id).first()
         if user:
-            ingest_service.process_top_tracks(user, db)
+            # Generate today's dispatch as soon as the first top track finishes
+            # processing and let the frontend's /status poll flip to "ready".
+            # The remaining top tracks keep processing in the background so
+            # tomorrow's dispatch already has fresh query candidates.
+            def unblock():
+                ingest_service.query_recommendations(user, db)
+                processing_users.discard(user_id)
+            ingest_service.process_top_tracks(user, db, on_first_success=unblock)
     finally:
         processing_users.discard(user_id)
         db.close()
@@ -92,7 +99,7 @@ async def get_recs(
 
 @router.get("/top_tracks/")
 @limiter.limit("30/minute", key_func=session_key)
-async def get_top_tracks(
+def get_top_tracks(
     request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -104,4 +111,10 @@ async def get_top_tracks(
         .limit(10)
         .all()
     )
-    return TopTracksResponse(tracks=[TopTrackItem.from_user_top_song(r) for r in rows])
+    # All rows in one snapshot share a snapshot_at; max() is robust if a future
+    # change ever mixes snapshots. None when there are no rows yet.
+    last_synced_at = max((r.snapshot_at for r in rows if r.snapshot_at), default=None)
+    return TopTracksResponse(
+        tracks=[TopTrackItem.from_user_top_song(r) for r in rows],
+        last_synced_at=last_synced_at,
+    )

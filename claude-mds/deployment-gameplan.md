@@ -1,0 +1,710 @@
+# Production Deployment Gameplan — Docker on AWS EC2 + GitHub CI/CD
+
+**Date:** 2026-06-15 (revised 2026-07-13 — re-verified against the codebase, agent-audited)
+**Branch:** `Backend-optimization`
+**Goal:** Take the current multi-service app to a production deployment on a single
+AWS EC2 instance, running under Docker Compose, fronted by nginx with Let's Encrypt
+TLS, behind a GitHub Actions CI/CD pipeline that tests, builds to ECR, and deploys
+via SSM.
+
+> This is an **ordered runbook**. Work top to bottom — later phases assume earlier
+> ones are done. Each item states **How** (concrete steps) and **Why** (the reason
+> it matters at scale). Items are checkboxes so you can track progress.
+
+---
+
+## Locked decisions (from clarifying Q&A)
+
+| Decision | Choice |
+|----------|--------|
+| **Database** | AWS **RDS for PostgreSQL** (already provisioned) — app connects over the network; no DB container. |
+| **TLS / ingress** | **nginx on the instance + Let's Encrypt (Certbot)**. |
+| **Image registry + deploy** | **Amazon ECR** for images; deploy triggered by **SSM Run Command** (no inbound SSH). |
+| **Secrets** | **SSM Parameter Store** (SecureString), materialized at deploy time. |
+| **Domain** | **Register via Porkbun**; **DNS hosted at Porkbun** (a single `A` record → Elastic IP — not Route 53). |
+| **Scope** | **Web app only** (backend + frontend + nginx). `data_pipeline` deferred. |
+| **Downtime** | Brief recreate is acceptable — simple pull-and-up deploy. |
+
+---
+
+## Current-state assessment (what exists vs. what's missing)
+
+**What you already have working for you**
+- Clean multi-stage [frontend/Dockerfile](../frontend/Dockerfile) (Next.js `standalone`).
+- A backend [Dockerfile](../backend/Dockerfile) that builds and runs uvicorn.
+- Alembic is set up ([backend/alembic/](../backend/alembic/)) alongside the models.
+- Security headers + HSTS toggle already implemented in [main.py](../backend/app/main.py).
+- `sentry-sdk` and `slowapi` already in [backend_requirements.txt](../backend/backend_requirements.txt).
+
+**What blocks a production deploy (addressed by the phases below)**
+- [docker-compose.yaml](../docker-compose.yaml) is **broken**: `db` service is commented out
+  but `backend` still `depends_on: [db]`. No restart policies, healthchecks, or networks.
+- **No `.github/` directory** — there is zero CI/CD today.
+- Schema is created at runtime via `Base.metadata.create_all()`
+  ([main.py:25](../backend/app/main.py#L25)) **and** Alembic exists → two competing schema
+  authorities. Production must use Alembic only.
+- TLS uses **mkcert localhost certs** hardcoded in compose/nginx; nginx has no real
+  `server_name`, no HTTP→HTTPS redirect, no proxy/forwarded headers.
+- No `/health` endpoint for healthchecks / deploy gating.
+- `sentry-sdk` is installed but **never initialized**.
+- Secrets sit in plaintext root `.env-backend` / `.env-postgres` (dev-only pattern).
+- Dev TLS material sits in the working tree: `frontend/localhost+1-key.pem` /
+  `localhost+1.pem` are **gitignored and were never committed** (`git log --all` is empty
+  for them), but [frontend/.dockerignore](../frontend/.dockerignore) doesn't exclude
+  `*.pem`, so they enter the frontend build context (builder stage only — the multi-stage
+  runtime image doesn't ship them).
+
+---
+
+## Order of operations (the big picture)
+
+```
+0. AWS account groundwork (IAM roles, OIDC, ECR repos, domain)
+1. App-level production correctness (health, Alembic-only, Sentry, prod config)
+2. Harden the Docker images (.dockerignore, non-root, healthcheck, pinning)
+3. Production docker-compose (RDS, ECR images, restart, healthchecks, no db service)
+4. Production nginx config (real server_name, redirect, forwarded headers, TLS hardening)
+5. Secrets in SSM Parameter Store
+6. Provision + bootstrap the EC2 instance (Docker, IAM role, SG, Elastic IP, DNS)
+7. First TLS certificate (Certbot) + auto-renewal
+8. GitHub Actions: CI (test) → Build/Push (ECR) → Deploy (SSM)
+9. Observability, backups, alarms
+10. Pre-launch verification + cutover + rollback runbook
+11. Post-launch: retire Spotify login + search seeding — first workstream through the pipeline
+```
+
+Rationale for the ordering: the **images must be correct before you ship them** (phases
+1–2), the **runtime topology must be defined before the host exists** (phases 3–5), the
+**host must exist and resolve over TLS before CI can deploy to it** (phases 6–7), and CI/CD
+is the last thing you wire because it automates a process you've already proven by hand.
+
+---
+
+## Phase 0 — AWS groundwork & prerequisites
+
+- [x] **0.1 Register a domain and create a stable DNS record.**
+  **How:** Register the domain at **Porkbun** (~$11–12/yr for `.com`, free WHOIS privacy)
+  and manage DNS in **Porkbun's own DNS panel** — no Route 53 hosted zone. You'll add a
+  single `A` record pointing at the instance's Elastic IP in Phase 6. (Route 53 isn't
+  needed here: the only record is one static `A` → EIP, and TLS is handled by Certbot on
+  the box, not ACM. If you later scale out to an ALB, migrate DNS to Route 53 then — see
+  the deferred HA note.)
+  **Why:** OAuth redirect URIs and CORS need a stable FQDN, and standard 90-day Let's
+  Encrypt certificates require a domain. (LE's IP-address certs went GA in Jan 2026, but
+  only under the short-lived ~6-day profile — the wrong operational tradeoff here.)
+
+- [x] **0.2 Confirm region and architecture.**
+  **How:** Deploy in **`us-east-1` (N. Virginia)** — the same region as the RDS instance
+  (`pyo_db`). Use an **x86_64 (`t3`/`m`)** instance, **not** Graviton/`t4g`.
+  **Why:** `essentia-tensorflow==2.1b6.dev1389` ([backend_requirements.txt](../backend/backend_requirements.txt))
+  ships prebuilt wheels for `linux/amd64`; ARM wheels are not reliably available and you'd be
+  stuck compiling. GitHub runners are amd64 by default, so images will match.
+
+- [x] **0.3 Create the ECR repositories.**
+  **How:** `aws ecr create-repository --repository-name putyouon/backend` and
+  `.../frontend`. Enable **scan-on-push** and a **lifecycle policy** (e.g. keep last 10
+  images).
+  **Why:** Private, IAM-controlled image storage co-located with EC2 (fast pulls, no
+  egress); scanning catches known CVEs; lifecycle policy stops untagged layers from
+  accumulating cost.
+
+- [x] **0.4 Create the EC2 instance IAM role (instance profile).**
+  **How:** Role with: `AmazonSSMManagedInstanceCore` (SSM agent), ECR pull
+  (`ecr:GetAuthorizationToken`, `BatchGetImage`, `GetDownloadUrlForLayer`), and scoped SSM
+  read (`ssm:GetParametersByPath` on `arn:aws:ssm:*:*:parameter/putyouon/prod/*` +
+  `kms:Decrypt` on the key).
+  **Why:** The instance pulls images and secrets using its role — **no static AWS keys on
+  the box**. SSM core is what lets you deploy and get a shell without opening SSH.
+
+- [x] **0.5 Create the GitHub Actions deploy role via OIDC.**
+  **How:** Add GitHub's OIDC provider to IAM, then a role trusted by your repo with: ECR
+  push, `ssm:SendCommand` scoped to your instance + the `AWS-RunShellScript` document, and
+  `ssm:GetCommandInvocation` so the deploy job can poll the command result (without it,
+  8.3 can fire the deploy but never fail the job when the health gate fails).
+  **Why:** OIDC gives CI short-lived, repo-scoped credentials — **no long-lived AWS access
+  keys stored in GitHub secrets** (the single most common cloud-credential leak).
+
+> **Phase 0 provisioned (all in `us-east-1`) — recorded 2026-07-17:**
+> - **Domain:** `putyouon.app` (registered + DNS at Porkbun; `A` record added in 6.4).
+> - **ECR repos:** `putyouon/backend`, `putyouon/frontend` (private, scan-on-push,
+>   keep-last-10 lifecycle).
+> - **Instance role (0.4):** `putyouon-ec2-instance-role` = managed
+>   `AmazonSSMManagedInstanceCore` + customer policy `putyouon-ec2-ecr-ssm-read`.
+> - **CI/CD OIDC (0.5):** provider `token.actions.githubusercontent.com`; role
+>   `putyouon-github-actions-deploy` (trusts `repo:bframos8/put-you-on:ref:refs/heads/main`)
+>   + customer policy `putyouon-cicd-deploy-permissions`. Its **role ARN** is what Phase 8
+>   wires as `role-to-assume`.
+>
+> **Two intentional placeholders to tighten later — do not forget:**
+> - **Phase 5:** scope `kms:Decrypt` in `putyouon-ec2-ecr-ssm-read` from `*` to the real
+>   SecureString KMS key ARN once the key is chosen.
+> - **Phase 6.1:** scope `ssm:SendCommand` in `putyouon-cicd-deploy-permissions` from
+>   `instance/*` to the specific instance ARN once the instance exists.
+>
+> Concepts behind every Phase 0 decision are written up in
+> [deployment-learnings.md](deployment-learnings.md).
+
+---
+
+## Phase 1 — App-level production correctness
+
+> These are code changes. Do them first so the images you build in Phase 2 are already
+> production-shaped.
+
+- [x] **1.1 Add a `/health` endpoint to the backend.**
+  **How:** A tiny router returning `200 {"status":"ok"}`; optionally a `/health/ready` that
+  does a cheap `SELECT 1` against the DB. Register it in [main.py](../backend/app/main.py)
+  (unauthenticated, not rate-limited).
+  **Why:** Compose healthchecks, nginx upstream checks, the deploy script's "is it back up?"
+  gate, and external uptime monitors all need a cheap liveness/readiness signal.
+
+- [ ] **1.2 Make Alembic the single schema authority; stop `create_all` in production.**
+  *(Absorbs deferred item **P6** — see
+  [backend-optimization-deferred.md](../backend/agents/backend-optimization-deferred.md).)*
+  **How:**
+  (a) **Author a baseline `op.create_table` root migration.** The current root
+  ([ad1aecf9f82f](../backend/alembic/versions/ad1aecf9f82f_initial_schema.py)) only
+  `add_column`s onto an already-existing table — no migration creates the six base tables,
+  so `create_all` is load-bearing for fresh DBs today. The new root must open with
+  `op.execute("CREATE EXTENSION IF NOT EXISTS vector")` (no migration installs pgvector,
+  so a fresh-DB `upgrade head` would otherwise fail on the vector columns). Use
+  `alembic revision --autogenerate` as a drift check: reconcile until it produces an empty
+  diff against the models.
+  (b) **Audit the live DB's `alembic_version` and `alembic stamp` it onto the re-rooted
+  chain.** Live DB and repo head currently match (`b8c9d0e1f2a3` — today's `upgrade head`
+  is a no-op), but step (a) rewrites the chain's root: without a stamp onto the new chain,
+  the first deploy's `alembic upgrade head` would try to re-run history — duplicate-column
+  failures, or worse, re-running
+  [d9e1f3a4b205](../backend/alembic/versions/d9e1f3a4b205_add_hnsw_index_songs_embedding.py)
+  and silently kicking off the ~1-hour HNSW build that P5b gates behind an RDS scale-up
+  (see 10.2 — that migration is recorded as applied, but its index was later dropped
+  manually; the rebuild belongs to P5b, not alembic).
+  (c) Remove the `Base.metadata.create_all(bind=engine)` call at
+  [main.py:25](../backend/app/main.py#L25), or guard it behind a `RUN_CREATE_ALL=true`
+  flag used only for local dev. (d) Deployment runs `alembic upgrade head` as an explicit
+  step (Phase 8).
+  **Why:** `create_all` only ever **adds missing tables** — it never alters columns, adds
+  indexes, or drops things. Shipping schema changes with it silently diverges prod from your
+  models. Two schema authorities is a classic production data hazard.
+  **Risk:** Medium-high — verify the baseline and the stamp carefully against RDS before
+  cutting over. This is the highest-risk correctness item in the plan.
+
+- [ ] **1.3 Initialize Sentry.**
+  **How:** In [main.py](../backend/app/main.py), `import sentry_sdk` and
+  `sentry_sdk.init(dsn=os.getenv("SENTRY_DSN"), traces_sample_rate=..., environment="prod")`
+  guarded by the env var being present (no-op locally). Add `SENTRY_DSN` to
+  [.env.example](../backend/.env.example) as part of this item (it's absent today).
+  **Why:** You already pay for the dependency. Production without error tracking means you
+  learn about failures from users, not dashboards.
+
+- [ ] **1.4 Set the production process model for uvicorn.**
+  **How:** Run uvicorn with `--proxy-headers --forwarded-allow-ips="*"` (it sits behind
+  nginx). For multi-core use, add workers — but **measure first**: each worker is a **full
+  copy** of the app, and the P1/P2 double model load means that copy carries both model
+  instances. That copy is smaller than once assumed — ~313 MB for both models plus the
+  FastAPI stack ≈ **~0.5–1 GB per worker** (measured 2026-07-14; see 6.1) — so a `t3.medium`
+  can host a worker or two, but confirm RAM headroom before scaling. Start with **1 worker**
+  and scale up only if metrics allow.
+  **Why:** `--proxy-headers` makes the app see the real client IP. Without it, `slowapi`
+  keys every request on nginx's address ([limiter.py](../backend/app/core/limiter.py) uses
+  `get_remote_address`), so the unauthenticated login/callback limits collapse into one
+  **site-wide** bucket — ~21 logins/minute across all users starts returning 429s. (HSTS is
+  *not* affected: it's a static `ENABLE_HSTS` toggle, scheme-independent.) Worker count is
+  a memory/throughput tradeoff specific to this TF-heavy service.
+
+- [ ] **1.5 Point all environment config at the real domain.**
+  **How:** In production env (Phase 5): `ENABLE_HSTS=true`,
+  `CORS_ALLOWED_ORIGINS=https://putyouon.app`, `FRONTEND_URL=https://putyouon.app`,
+  `SPOTIFY_REDIRECT_URI=https://putyouon.app/api/v1/auth/spotify/callback`. Ensure
+  `DAILY_LIMIT_BYPASS` stays **unset** in prod (it disables the daily dispatch limit) and
+  document it in [.env.example](../backend/.env.example), where it's missing today. Keep
+  [backend/.env.example](../backend/.env.example) updated as the documented contract.
+  **Why:** These currently default to `localhost`/`127.0.0.1`. OAuth, CORS, and HSTS all
+  break or become insecure if they don't match the served origin.
+
+- [ ] **1.6 Register the production OAuth callback in the Spotify dashboard.**
+  **How:** Add `https://putyouon.app/api/v1/auth/spotify/callback` to your Spotify app's
+  Redirect URIs.
+  **Why:** Spotify rejects any redirect URI not pre-registered — OAuth will fail on first
+  login otherwise. Easy to forget; blocks the entire core flow.
+
+- [ ] **1.7 Keep dev TLS material out of the build context.**
+  **How:** Add `*.pem` to [frontend/.dockerignore](../frontend/.dockerignore) (it lists
+  only `node_modules`/`.next`/`.env*.local` today) and don't reference the mkcert files in
+  prod config. *(Corrected: the pems were never committed — root `.gitignore` covers
+  `*.pem` and `git log --all` is empty for them — so no rotation or history purge is
+  needed. The multi-stage build already keeps them out of the runtime image; this closes
+  the builder stage/cache too.)*
+  **Why:** Private keys don't belong in any image layer, including intermediate ones.
+
+- [ ] **1.8 (Recommended, from your audit) Replace `print()` with `logging`.**
+  **How:** `logger = logging.getLogger(__name__)` per module; `logger.info/warning/exception`.
+  This is **H3** in [housekeeping-audit.md](housekeeping-audit.md).
+  **Why:** Production needs log levels, timestamps, and the ability to route/silence output.
+  `print()` to stdout can't be filtered and loses exception context. Non-blocking, can be
+  staged, but do it before you're debugging prod through `docker logs`.
+
+---
+
+## Phase 2 — Harden the Docker images
+
+- [ ] **2.1 Add `backend/.dockerignore`.**
+  **How:** Exclude `tests/`, `pytest.ini`, `test-requirements.txt`, `.pytest_cache/`,
+  `agents/`, `__pycache__/`, `*.pyc`, `.env*`, and any local certs/scratch. **Keep**
+  `app/` (including `app/models/*.pb` — the runtime TF model), `alembic/`, `alembic.ini`,
+  `backend_requirements.txt`. (CI mounts the test files back in — see 8.1.)
+  **Why:** The current backend [Dockerfile](../backend/Dockerfile) does `COPY . .` with no
+  ignore file, baking tests/cache/agents into the image — larger images, slower pulls, more
+  attack surface. (The frontend already has a [.dockerignore](../frontend/.dockerignore).)
+
+- [ ] **2.2 Run both images as a non-root user.**
+  **How:** Backend: add a `useradd app` and `USER app` before `CMD`. Frontend: switch to the
+  built-in `node` user in the runtime stage.
+  **Why:** Defense in depth — a container escape or RCE shouldn't land as root. Standard
+  baseline for production images.
+
+- [ ] **2.3 Add a `HEALTHCHECK` to each image.**
+  **How:** Backend: `HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1`.
+  Frontend: hit `http://localhost:3000/`. (Install `curl` or use a tiny Python/Node check.)
+  **Why:** Lets Docker/Compose report container health, which the deploy gate and
+  `depends_on: condition: service_healthy` rely on.
+
+- [ ] **2.4 Pin base images and keep the build lean.**
+  **How:** Keep `python:3.11-slim-bookworm` / `node:20-alpine`; consider pinning by digest.
+  Pin `spotdl` in [backend_requirements.txt](../backend/backend_requirements.txt) — it's
+  bare today, so every build can resolve a different version of the tool driving the whole
+  download path. Backend is mostly binary wheels, so a heavy multi-stage split isn't
+  required — but ensure `--no-cache-dir` (already present) and that `ffmpeg` (needed by
+  `spotdl`) stays.
+  **Why:** Reproducible builds and a smaller runtime surface. ffmpeg is a real runtime
+  dependency of the audio path — don't drop it.
+
+- [ ] **2.5 Confirm the frontend build bakes the right API URL.**
+  **How:** The image must be built with `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`
+  (wired in CI, Phase 8). Today compose passes `https://127.0.0.1`
+  ([docker-compose.yaml:20](../docker-compose.yaml#L20)).
+  **Why:** `NEXT_PUBLIC_*` values are **inlined into the client bundle at build time**. A
+  wrong value can't be fixed at runtime — the browser would call `127.0.0.1`.
+
+---
+
+## Phase 3 — Production docker-compose
+
+- [ ] **3.1 Create `docker-compose.prod.yaml` (keep the dev one for local).**
+  **How:** Prod compose uses `image: <acct>.dkr.ecr.<region>.amazonaws.com/putyouon/backend:<tag>`
+  (and frontend) instead of `build:`. The instance pulls; it never builds.
+  **Why:** Building on the box competes with the running app for CPU/RAM (your backend image
+  is heavy) and couples deploys to a working toolchain on the host. Pull pre-built, tested
+  images instead.
+
+- [ ] **3.2 Remove the DB service and the broken dependency.**
+  **How:** Delete the commented `db` block and `depends_on: [db]`. The backend reaches RDS
+  via `POSTGRES_HOST=<rds-endpoint>` (plus `POSTGRES_PORT/DB/USER/PASSWORD`) from env
+  (Phase 5) — those are the names [database.py](../backend/app/db/database.py) reads.
+  **Why:** Today's compose references a `db` service that doesn't exist, so `backend` can't
+  start. RDS is your database now.
+
+- [ ] **3.3 Add restart policies, healthchecks, an explicit network, and log limits.**
+  **How:** `restart: unless-stopped` on every service; `depends_on` with
+  `condition: service_healthy`; a named bridge network; and a logging block
+  (`json-file`, `max-size: 10m`, `max-file: 3`).
+  **Why:** Survive crashes and instance reboots; start in the right order; and cap log growth
+  so a chatty container can't fill the disk and take down the box.
+
+- [ ] **3.4 Set resource limits, especially on the backend.**
+  **How:** Give the backend a `mem_limit` sized to (per-worker footprint × workers +
+  transient `spotdl`/audio overhead), with headroom below total instance RAM. On a
+  `t3.medium`, a ~1.5–2 GB cap leaves room for the frontend/nginx and OS.
+  **Why:** The backend isn't especially memory-hungry (~313 MB for both model instances,
+  measured — see 6.1), but a runaway (concurrent ingests spawning `spotdl` subprocesses, or
+  a leak) shouldn't be able to OOM the host and take nginx/frontend down with it. A cap fails
+  one container, not the box.
+
+- [ ] **3.5 Wire nginx to Let's Encrypt certs and expose 80 + 443.**
+  **How:** Publish `80:80` and `443:443`; mount the host's `/etc/letsencrypt:/etc/letsencrypt:ro`
+  and an ACME webroot. Drop the localhost `.pem` mounts.
+  **Why:** Real certs live on the host (managed by Certbot in Phase 7); port 80 is needed for
+  the ACME HTTP-01 challenge and the HTTPS redirect.
+
+---
+
+## Phase 4 — Production nginx config
+
+- [ ] **4.1 Real `server_name` + HTTP→HTTPS redirect + ACME challenge.**
+  **How:** A `:80` server with `server_name putyouon.app;`, a
+  `location /.well-known/acme-challenge/ { root /var/www/certbot; }`, and
+  `return 301 https://$host$request_uri;` for everything else.
+  **Why:** Certbot HTTP-01 validation hits port 80; all real traffic should be forced to TLS.
+
+- [ ] **4.2 Forward the headers the app depends on.**
+  **How:** On the proxy locations add `proxy_set_header X-Forwarded-Proto $scheme;`,
+  `X-Forwarded-For $proxy_add_x_forwarded_for;`, `X-Real-IP $remote_addr;`, `Host $host;`.
+  **Why:** The backend runs `--proxy-headers` and uses these for HSTS correctness and for
+  `slowapi` to rate-limit by real client IP. Today's [nginx.conf](../nginx/nginx.conf) only
+  sets `Host`.
+
+- [ ] **4.3 Raise timeouts and body limits for the ML path.**
+  **How:** `client_max_body_size` to a sane cap, and bump `proxy_read_timeout` /
+  `proxy_send_timeout` on `/api/` (the ingest/classify path can run long).
+  **Why:** Audio download + embedding is slow; nginx's default 60s read timeout can cut off
+  legitimate long requests with a 504.
+
+- [ ] **4.4 TLS hardening + gzip.**
+  **How:** Mozilla "intermediate" `ssl_protocols`/`ssl_ciphers`, OCSP stapling, `gzip on` for
+  text/JSON.
+  **Why:** A clean SSL Labs grade and smaller responses. Cheap, standard, expected at scale.
+
+---
+
+## Phase 5 — Secrets in SSM Parameter Store
+
+- [ ] **5.1 Define a parameter namespace.**
+  **How:** Store each secret as a **SecureString** under `/putyouon/prod/…`:
+  `SESSION_SECRET`, **`TOKEN_ENCRYPTION_KEYS`** (required — both the app and alembic
+  refuse to start without it, [crypto.py](../backend/app/core/crypto.py)),
+  `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SENTRY_DSN`, and the `POSTGRES_*` DB
+  credentials/host. Store the **non-secret config in the same path as `String` params** so
+  5.2 materializes the full contract in one pull: `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`,
+  `SPOTIFY_REDIRECT_URI`, `ENABLE_HSTS` (and optionally `SPOTIFY_HTTP_TIMEOUT`,
+  `OAUTH_STATE_TTL_SECONDS`). If any of these non-secrets are omitted the app still starts
+  and silently falls back to `127.0.0.1` origins — broken OAuth/CORS with no startup
+  error.
+  **Why:** Central, encrypted (KMS), IAM-scoped, and auditable — no plaintext secrets in the
+  repo, the image, or CI logs.
+
+- [ ] **5.2 Materialize secrets at deploy time.**
+  **How:** The deploy script (Phase 8) runs
+  `aws ssm get-parameters-by-path --path /putyouon/prod --with-decryption` and writes
+  `.env-backend` / `.env-postgres` on the instance with `chmod 600`, owned by root, then
+  `docker compose --env-file` / `env_file:` consumes them.
+  **Why:** Keeps the app's existing `env_file` contract (minimal app change) while the source
+  of truth stays in SSM. Files are root-only and regenerated each deploy. Note: compose
+  `env_file:` injection is **mandatory** — the in-code dotenv fallbacks
+  ([main.py:8](../backend/app/main.py#L8), [database.py](../backend/app/db/database.py))
+  resolve to `/` inside the image and are silent no-ops; don't "fix" a config problem by
+  baking env files into the image.
+
+- [ ] **5.3 Keep `.env.example` authoritative, never commit real env.**
+  **How:** `.gitignore` already covers `.env-*` (keep it). Update
+  [backend/.env.example](../backend/.env.example) whenever a var is added.
+  **Why:** New contributors and the deploy script both rely on the example as the contract.
+
+---
+
+## Phase 6 — Provision & bootstrap the EC2 instance
+
+- [ ] **6.1 Launch the instance.**
+  **How:** Amazon Linux 2023 (SSM agent preinstalled) or Ubuntu 22.04, **x86_64** (kernel-6.1
+  default AMI), start at **t3.medium (4 GB RAM)** and right-size from metrics — `t3.small`
+  (2 GB) is worth testing (see Why). Attach the **instance IAM role** from 0.4. Use a gp3 EBS
+  root volume with room for images (≥30 GB).
+  **Why:** Contrary to the earlier 8 GB assumption, a direct measurement (2026-07-14,
+  `/usr/bin/time -l` on the pipeline venv) put the Essentia/TF runtime + **both** required
+  model instances (P1/P2 — embeddings `PartitionedCall:1` and genre `PartitionedCall:0` off
+  the same graph) at only **~313 MB** — Essentia ships a lightweight C++ TF backend, not
+  Python `tensorflow`. Realistic full-host footprint (FastAPI stack + transient `spotdl`
+  subprocess + audio buffers + frontend/nginx containers + OS) is ~1–2 GB under load, so
+  **4 GB gives comfortable headroom at ~half the `t3.large` cost**. Validate the backend
+  container under a couple of concurrent ingests before trusting `t3.small`. The IAM role is
+  what enables image/secret pulls and SSM access without keys.
+
+- [ ] **6.2 Lock down the security group.**
+  **How:** Inbound **80 + 443 from 0.0.0.0/0** only. **No port 22** — use **SSM Session
+  Manager** for shell access. Ensure the **RDS security group allows 5432 from this
+  instance's SG**.
+  **Why:** Closing SSH removes the most-attacked port entirely; SSM gives audited,
+  key-less shell access. The RDS rule is what lets the app reach the database.
+
+- [ ] **6.3 Install Docker Engine + Compose plugin; enable on boot.**
+  **How:** Install `docker` and `docker-compose-plugin`, `systemctl enable --now docker`,
+  add the deploy user to the `docker` group.
+  **Why:** Compose runs your stack; enabling on boot means an instance reboot brings the app
+  back automatically (with the `restart` policies from 3.3).
+
+- [ ] **6.4 Allocate an Elastic IP and point DNS at it.**
+  **How:** Allocate + associate an Elastic IP; in **Porkbun's DNS panel** create an `A`
+  record `putyouon.app → EIP` (add `www` as a second `A`/`CNAME` if you want it). Create
+  **only** the `A` record — do **not** add an `AAAA`/IPv6 record: the box is IPv4-only, and
+  a stray `AAAA` pointing at a non-listening address makes Certbot validation fail. Allow
+  for DNS propagation before running Certbot in Phase 7.
+  **Why:** Certbot and OAuth need a **stable** address. A default public IP changes on
+  stop/start and would break TLS and redirects. Certbot's HTTP-01 challenge (Phase 7)
+  needs the `A` record already resolving to the EIP.
+
+- [ ] **6.5 Verify RDS state.**
+  **How:** The database is already live (`pyo_db`: migrations applied, ~110k rows, genre
+  backfill done — see
+  [backend-optimization-remaining.md](../backend/agents/backend-optimization-remaining.md)),
+  so this is **verification, not setup**: confirm `CREATE EXTENSION IF NOT EXISTS vector;`
+  is a no-op, confirm the app's DB user privileges, and confirm reachability from the
+  instance SG (6.2). The schema reconcile + stamp happens in 1.2/10.1; the HNSW rebuild in
+  10.2.
+  **Why:** Treating a live, populated database as fresh is how deploys corrupt data. The
+  remaining DB work is tracked and sequenced elsewhere, not re-done here.
+
+---
+
+## Phase 7 — First TLS certificate + auto-renewal
+
+- [ ] **7.1 Issue the initial certificate.**
+  **How:** With DNS resolving (6.4) and nginx serving the ACME challenge on port 80, run
+  Certbot (webroot mode against `/var/www/certbot`, or the standalone/nginx plugin) to issue
+  a cert for `putyouon.app`. **Note — `.app` is HSTS-preloaded at the TLD level:** browsers
+  force HTTPS for every `.app` host, but this does **not** block HTTP-01 — Let's Encrypt's
+  validator isn't a browser and reads the port-80 challenge fine, so keep webroot/HTTP-01
+  (don't switch to DNS-01). The catch: you can't sanity-check `http://putyouon.app` in a
+  browser during bootstrap — use `curl -v` or verify only once HTTPS is live. Bootstrap
+  order: bring nginx up serving just the challenge path on `:80` → run Certbot → then add
+  the `:443` server block and reload.
+  **Why:** This is the bootstrap that turns on HTTPS; everything downstream assumes a valid
+  cert at `/etc/letsencrypt/live/putyouon.app/`.
+
+- [ ] **7.2 Automate renewal + nginx reload.**
+  **How:** A systemd timer (or cron) running `certbot renew` twice daily, with a deploy hook
+  that reloads nginx (`docker compose exec nginx nginx -s reload`).
+  **Why:** Let's Encrypt certs last 90 days. Unattended renewal is the difference between
+  "set and forget" and a site-down incident every quarter.
+
+---
+
+## Phase 8 — GitHub Actions CI/CD
+
+> Three workflows. Protect `main` so nothing merges without green CI.
+>
+> **Branching model: trunk-based — `main` *is* prod.** Changes ride short-lived feature
+> branches → PR → green CI → merge, and the merge deploys. No standing `develop` branch:
+> local dev builds from your checkout (dev compose `build:`), while the instance only
+> pulls images a `main` merge produced — unmerged work has no path to prod. If
+> merge-equals-deploy ever feels too hot once real users exist, add a **GitHub
+> Environment approval gate** on the deploy job (required reviewer), not an environment
+> branch. Full rationale + team-workflow notes:
+> [deployment-learnings.md §14](deployment-learnings.md).
+
+- [ ] **8.1 CI workflow — test on every PR and push.**
+  **How:**
+  - **Backend:** build the backend image, then run the tests **in a container from that
+    image**, mounting the test files back in (2.1 excludes them from the image, and pytest
+    lives in [test-requirements.txt](../backend/test-requirements.txt), not the image):
+    `docker run -v ./backend/tests:/app/tests -v ./backend/pytest.ini:/app/pytest.ini -v
+    ./backend/test-requirements.txt:/app/test-requirements.txt <image> sh -c "pip install
+    -r test-requirements.txt && pytest"`. No extra env wiring needed —
+    [conftest.py](../backend/tests/conftest.py) injects all required env vars. Cache pip
+    layers.
+  - **Frontend:** `npm ci`, `npm run lint`, `npm run build`.
+  **Why:** Testing inside the built image means the test environment equals production — no
+  "works in CI, breaks in the image" gaps, and it validates the image as a side effect.
+  Installing `essentia-tensorflow` from scratch on a raw runner is slow and flaky; the image
+  already has it. `npm run build` catches type/build breaks that lint misses. *(The
+  `data_pipeline` suite is out of scope this pass but can be added later as a separate job.)*
+
+- [ ] **8.2 Build & Push workflow — on merge to `main`.**
+  **How:** Authenticate to AWS via **OIDC** (role from 0.5), `docker login` to ECR, build
+  **backend** and **frontend** (the latter with
+  `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`), tag with both the **git SHA** and
+  `latest`, and push to ECR.
+  **Why:** Immutable SHA tags make every deploy traceable and **instantly rollback-able**
+  (re-point to the previous SHA). OIDC means no AWS keys in GitHub.
+
+- [ ] **8.3 Deploy workflow — `ssm:SendCommand` to the instance.**
+  **How:** Send a shell script via `AWS-RunShellScript` that, on the instance:
+  1. materializes secrets from SSM (5.2),
+  2. `aws ecr get-login-password | docker login …`,
+  3. `docker compose -f docker-compose.prod.yaml pull`,
+  4. runs `alembic upgrade head` via `docker compose -f docker-compose.prod.yaml run --rm
+     backend alembic upgrade head` — compose `run` (not a bare `docker run`) so `env_file:`
+     supplies `POSTGRES_*` **and** `TOKEN_ENCRYPTION_KEYS`, both required by the alembic
+     import chain ([env.py](../backend/alembic/env.py) →
+     [crypto.py](../backend/app/core/crypto.py)). First deploy runs only after 1.2's
+     reconcile + stamp has landed (see 10.1),
+  5. `docker compose … up -d`,
+  6. polls `/health` until green (fail the job if it doesn't recover),
+  7. `docker image prune -f`.
+  **Why:** SSM needs **no inbound SSH** and leaves an audit trail. Running migrations as an
+  explicit pre-`up` step (not at app startup) keeps schema changes deliberate and observable.
+  The health poll turns a bad deploy into a failed CI job instead of a silent outage. Image
+  prune stops the disk from filling with old layers. Note: the recreate in step 5 kills any
+  in-flight ingest (`BackgroundTasks` dies with the process — deferred A2); rows already
+  written persist, but a user's run silently stops. Acceptable for now — prefer deploying
+  during quiet hours.
+
+- [ ] **8.4 Branch protection + required checks.**
+  **How:** Require the CI workflow to pass and the branch to be up to date before merge to
+  `main`.
+  **Why:** Automated deploy from `main` is only safe if `main` is always green and reviewed.
+
+---
+
+## Phase 9 — Observability, backups, alarms
+
+- [ ] **9.1 Metrics + dashboards: follow the observability plan.**
+  **How:** Collection and dashboards are specified in
+  [observability-plan.md](observability-plan.md) (locked: Grafana Cloud + a local Alloy
+  agent scraping node_exporter, cAdvisor, and the app's `/metrics`; RDS via the CloudWatch
+  *data source*). Do **not** add the CloudWatch agent — it would duplicate that collection
+  layer on a RAM-tight box. (Container log size is already capped per 3.3.)
+  **Why:** One collection stack, already decided and sized for this instance.
+
+- [ ] **9.2 Minimal alarms on the things that page you.**
+  **How:** The observability plan defers full alerting to its Phase 6, but keep a **tiny
+  CloudWatch alarm set** on what's native without an agent: RDS free storage, RDS
+  connections, EC2 status checks — plus an external uptime check on `/health`. (EC2
+  **disk** is *not* a native CloudWatch metric; disk visibility comes from node_exporter
+  in the Grafana stack — watch that dashboard until its alerting phase lands. 3.3's log
+  caps and 8.3's image prune are the mitigations meanwhile.)
+  **Why:** Dashboards don't page you. Disk-full and RDS-connection-exhaustion are the two
+  most common ways this class of app falls over; these alarms read AWS-side metrics
+  directly and don't touch the Grafana stack.
+
+- [ ] **9.3 Confirm RDS backups + test a restore.**
+  **How:** Verify automated backups + retention on RDS; do one **practice restore** to a
+  scratch instance.
+  **Why:** A backup you've never restored is a hypothesis, not a backup. RDS makes this easy —
+  use it.
+
+---
+
+## Phase 10 — Pre-launch verification & cutover
+
+- [ ] **10.1 Reconcile + stamp live RDS, then run migrations and verify schema.**
+  **How:** Take an RDS snapshot first. Execute 1.2's audit: confirm the live
+  `alembic_version` (last verified `b8c9d0e1f2a3`, matching the pre-1.2 repo head),
+  `alembic stamp` onto the re-rooted chain from 1.2(a), then `alembic upgrade head`;
+  confirm tables/indexes/`vector` columns match the models.
+  **Why:** This is the moment the 1.2 reconciliation pays off — verify before traffic, not
+  after. Skipping the stamp risks duplicate-column failures or an accidental hour-long
+  index build (see 1.2b).
+
+- [ ] **10.2 Finish P5b — rebuild the HNSW index (launch gate).**
+  **How:** Run the Path A runbook in
+  [backend-optimization-remaining.md](../backend/agents/backend-optimization-remaining.md):
+  scale RDS up, `CREATE INDEX … USING hnsw`, pass the EXPLAIN gate, scale back down, then
+  land the query change. Coordinate with 10.1's stamp so the deploy pipeline never
+  triggers the build itself.
+  **Why:** The index is currently dropped — both kNN branches seq-scan. Launching without
+  it means every recommendation request pays full-table-scan latency.
+
+- [ ] **10.3 End-to-end smoke test.**
+  **How:** Full Spotify OAuth round-trip on the real domain, a top-tracks fetch, and one ML
+  ingest/classify call. Check security headers + HSTS and an SSL Labs scan.
+  **Why:** OAuth, CORS, HSTS, and TLS only fully exercise against the real origin — this is
+  the test the dev environment can't give you.
+
+- [ ] **10.4 Document the rollback procedure.**
+  **How:** Write down: re-run the Deploy workflow pinned to the previous image SHA; if a
+  migration was destructive, restore from the RDS snapshot taken pre-deploy.
+  **Why:** Brief downtime is acceptable, but an *unrecoverable* deploy is not. A one-page
+  runbook turns a 2 a.m. incident into a checklist.
+
+---
+
+## Phase 11 — First post-launch workstream: retire Spotify login (pipeline shakedown)
+
+> The app **launches as-is with Spotify OAuth** — the ~25-user dev-mode cap is accepted
+> at cutover. This phase then implements
+> [spotify-ingest-without-quota-plan.md](spotify-ingest-without-quota-plan.md) (email +
+> Google login, search-and-pick seeding, playlist import) as the **first real test of
+> the live CI/CD pipeline**: every step lands as a PR → CI (8.1) → merge → build/push
+> (8.2) → deploy (8.3), under branch protection (8.4).
+
+- [ ] **11.1 Ship Phase A (identity) through the pipeline, item by item.**
+  **How:** Implement A1–A8 from that plan as individual PRs. **A1's migration is the
+  first live exercise of the deploy's `alembic upgrade head` step** (8.3 step 4): it
+  extends the chain 1.2 re-rooted, and 10.1's practice applies — take an RDS snapshot
+  before merging it. Before merging A5: create the Google OAuth client, register
+  `https://putyouon.app/api/v1/auth/google/callback`, and add `GOOGLE_CLIENT_SECRET`
+  (SecureString) + `GOOGLE_CLIENT_ID` / `GOOGLE_REDIRECT_URI` (String) under
+  `/putyouon/prod/` (5.1 pattern) — 5.2 materializes them on the next deploy with no
+  other change.
+  **Why:** A schema migration + a secrets change + rolling code changes is exactly the
+  deploy shape the pipeline exists for — better to shake it out on a planned workstream
+  than during an emergency.
+
+- [ ] **11.2 Retire the Spotify login in prod; re-run the smoke test.**
+  **How:** Once A6 deploys, the 1.6 Spotify redirect URI is retired and the 25-user cap
+  stops constraining signups. Repeat 10.3's smoke test against the real origin with
+  **email + Google logins** in place of the Spotify round-trip (cookies, CORS, TLS,
+  redirect returns).
+  **Why:** The cutover smoke test proved the Spotify flow; this proves its replacement
+  under the same real-origin conditions the dev environment can't reproduce.
+
+- [ ] **11.3 Ship Phases B and C (search-and-pick, playlist import) the same way.**
+  **How:** Continue the per-item PR cadence for B1–B6, then C1–C3. Two post-launch
+  cautions: 8.3's recreate kills in-flight ingests and there are now real users — merge
+  during quiet hours; and between Phase A and B5's picker, new registrants see only the
+  minimal `needs_seeds` state — bundle A7 + B5 into adjacent merges if that gap matters.
+  **Why:** Search-and-pick is the real onboarding once the cap is gone — Phase A without
+  B leaves new users a dashboard with nothing to seed it.
+
+---
+
+## Deferred / follow-up (explicitly out of this pass)
+
+- **`data_pipeline` deployment** — packaging and scheduling (cron/systemd/EventBridge) is a
+  separate effort once the web app is live.
+- **Zero-downtime deploys** — current plan accepts brief recreate downtime; blue/green is a
+  later upgrade.
+- **Model binary in git (audit H2)** — the 18 MB `.pb` committed twice
+  ([housekeeping-audit.md](housekeeping-audit.md) H2) bloats clones. Note the backend image
+  *must* ship its copy (`app/models/*.pb` is the runtime TF model), so the finding is repo
+  bloat only. LFS/history-purge is a deliberate, separate call.
+- **HA / autoscaling** — single instance now; an ALB + ASG (and moving TLS to ACM, plus
+  migrating DNS from Porkbun to a Route 53 alias record) is the scale-out path if you
+  outgrow one box.
+
+- **Cost-driven migration to a cheaper stack (planned, post-learning)** — the AWS-native
+  design here (RDS, ECR, IAM/OIDC, SSM secrets + SSM-deploy) carries an AWS-native price
+  (~$40–70/mo even right-sized to `t3.medium` — dominated by compute + RDS). This
+  deployment is on AWS **deliberately, to learn the ecosystem**; the intended follow-up is a move to a cheaper host — target
+  **Hetzner** (CX33, 8 GB, ~$7/mo) for compute + **Neon or Supabase** (managed Postgres
+  with pgvector) for the DB — for a ~$10–20/mo total.
+  - **Transfers cleanly:** the Docker images (repush to GHCR/Docker Hub), `docker-compose`,
+    the nginx config + Certbot TLS flow, the DB *data* (`pg_dump` RDS → `pg_restore` Neon,
+    then rebuild the HNSW index on the other side), the `.env` contract, and the Grafana
+    Cloud + Alloy observability stack (not AWS-native, so it just re-points).
+  - **Gets rebuilt (the AWS glue):** ECR → another registry; IAM roles + OIDC (0.4/0.5) →
+    SSH keys (no IAM); SSM Parameter Store (Phase 5) → env files / SOPS / Doppler; SSM Run
+    Command deploy (Phase 8) → SSH-based deploy (e.g. Kamal); security groups / Elastic IP
+    / SSM shell (Phase 6) → Hetzner firewall / floating IP / SSH; RDS backups + CloudWatch
+    alarms (9.2/9.3) → Neon PITR/branching. That's Phases 0.4, 0.5, 5, 6, 8 — a large share
+    of the plan's *effort*, but faster the second time (Hetzner's model is simpler), and it
+    *is* the transferable concepts the AWS pass teaches.
+  - **The one discipline that keeps the app portable:** never call the AWS SDK (`boto3`)
+    from `app/`. Secrets reach the app only as plain env vars materialized into `.env` files
+    at deploy time (5.2) — that `env_file` boundary is the portability seam. Keep all
+    AWS-specific logic in the *deploy scripts*, never in application code, and the app half
+    lifts-and-shifts with zero changes.
+  - **Interim AWS cost lever (no migration):** the real lever is **right-sizing the
+    instance**, not the model. A direct measurement (2026-07-14, `/usr/bin/time -l` on the
+    pipeline venv) put the Essentia/TF runtime + model at **~277 MB for one instance and
+    ~313 MB for both** — Essentia bundles a lightweight C++ TF backend, not Python
+    `tensorflow`. The two model instances are **required, not a bug**: ingest reads output
+    `PartitionedCall:1` (embeddings) and genre reads `PartitionedCall:0` off the same graph;
+    consolidating to a single load is the deferred, higher-risk **P1/P2** work
+    ([backend-optimization-deferred.md](../backend/agents/backend-optimization-deferred.md) —
+    embeddings drive kNN recs, no equivalence-test infra), and the second load costs only
+    ~36 MB anyway, so it is **not** a memory or cost lever. With a realistic full-host
+    footprint of ~1–2 GB under load, size 6.1 at **`t3.medium` (4 GB, ~$30/mo)** rather than
+    `t3.large`, add a 1-year Compute Savings Plan (~30–40% off), and you land near ~$20/mo
+    with no architecture change.
+
+---
+
+## Critical-path summary (the deploy-blockers, in order)
+
+1. Domain registered + DNS → Elastic IP (0.1, 6.4)
+2. Alembic-only schema: baseline root + live-RDS reconcile/stamp, `create_all` removed
+   (1.2, 10.1) — **highest risk**
+3. `/health` endpoint (1.1)
+4. Real-domain env + Spotify redirect URI registered (1.5, 1.6) — OAuth is dead without
+   both
+5. ECR repos + IAM roles + OIDC (0.3–0.5)
+6. Fixed prod compose (no `db`, RDS env, restart/health) (3.x)
+7. Prod nginx + first Certbot cert (4.x, 7.x)
+8. Secrets in SSM incl. `TOKEN_ENCRYPTION_KEYS`, materialized at deploy (5.x)
+9. Instance provisioned + bootstrapped (6.1–6.3)
+10. CI → Build/ECR → Deploy/SSM (8.x)
+11. HNSW index rebuilt — P5b launch gate (10.2)
+
+Everything else hardens or observes; the eleven above are what stand between you and a
+working production deploy. Phase 11 (email/Google login + search seeding) deliberately
+sits **after** cutover — it's the pipeline's first workstream, not a launch blocker.

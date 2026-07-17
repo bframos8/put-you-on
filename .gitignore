@@ -98,3 +98,16 @@ next-env.d.ts
 
 #Commands used in this repo
 .commands
+
+/reference
+/frontend/src/assets/fonts
+
+################################
+# Scratch / personal
+################################
+practice/
+.reminders
+
+# Claude Dev Files
+backend/agents
+frontend/agent-handoffs-FE

@@ -38,7 +38,9 @@ class DatabaseManager:
             self.conn.close()
             print("Database connection closed.")
 
-    def insert_row(self, table_name: str, column_names: list[str], data: list) -> None:
+    def _validate_single_insert(self, table_name: str, column_names: list[str], data: list) -> None:
+        """Guard shared by the single-row insert/upsert methods. Order and
+        messages are reproduced 1:1 from the original inline checks."""
         if not data:
             raise ValueError("Data list is empty. Cannot insert row without data.")
         if not table_name:
@@ -47,7 +49,20 @@ class DatabaseManager:
             raise ValueError("Column names list is empty. Cannot insert row without column names.")
         if len(column_names) != len(data):
             raise ValueError("Column names count does not match data count.")
-        
+
+    def _validate_batch_insert(self, table_name: str, column_names: list[str], rows: list) -> None:
+        """Guard shared by the batch insert methods. No length check — rows is a
+        list of tuples, not a flat value list. Messages reproduced 1:1."""
+        if not rows:
+            raise ValueError("Rows list is empty. Cannot insert without data.")
+        if not table_name:
+            raise ValueError("Table name is empty. Cannot insert without a table name.")
+        if not column_names:
+            raise ValueError("Column names list is empty. Cannot insert without column names.")
+
+    def insert_row(self, table_name: str, column_names: list[str], data: list) -> None:
+        self._validate_single_insert(table_name, column_names, data)
+
         query = sql.SQL('INSERT INTO {tableName} ({columnNames}) VALUES ({placeholders});').format(
             tableName = sql.Identifier(table_name), 
             columnNames = sql.SQL(', ').join(sql.Identifier(col) for col in column_names),
@@ -62,15 +77,8 @@ class DatabaseManager:
             print(f"An error inserting row occurred: {e}")
     
     def insert_row_and_return_id(self, table_name: str, column_names: list[str], data: list) -> int:
-        if not data:
-            raise ValueError("Data list is empty. Cannot insert row without data.")
-        if not table_name:
-            raise ValueError("Table name is empty. Cannot insert row without a table name.")
-        if not column_names:
-            raise ValueError("Column names list is empty. Cannot insert row without column names.")
-        if len(column_names) != len(data):
-            raise ValueError("Column names count does not match data count.")
-        
+        self._validate_single_insert(table_name, column_names, data)
+
         query = sql.SQL('INSERT INTO {tableName} ({columnNames}) VALUES ({placeholders}) RETURNING id;').format(
             tableName = sql.Identifier(table_name), 
             columnNames = sql.SQL(', ').join(sql.Identifier(col) for col in column_names),
@@ -135,12 +143,7 @@ class DatabaseManager:
             column_names: List of column names
             rows: List of tuples, each tuple containing values for one row
         """
-        if not rows:
-            raise ValueError("Rows list is empty. Cannot insert without data.")
-        if not table_name:
-            raise ValueError("Table name is empty. Cannot insert without a table name.")
-        if not column_names:
-            raise ValueError("Column names list is empty. Cannot insert without column names.")
+        self._validate_batch_insert(table_name, column_names, rows)
 
         query = sql.SQL('INSERT INTO {table} ({columns}) VALUES ({placeholders})').format(
             table=sql.Identifier(table_name),
@@ -192,12 +195,7 @@ class DatabaseManager:
             rows: List of tuples, each tuple containing values for one row
             chunk_size: Number of rows per batch (default 600)
         """
-        if not rows:
-            raise ValueError("Rows list is empty. Cannot insert without data.")
-        if not table_name:
-            raise ValueError("Table name is empty. Cannot insert without a table name.")
-        if not column_names:
-            raise ValueError("Column names list is empty. Cannot insert without column names.")
+        self._validate_batch_insert(table_name, column_names, rows)
 
         query = sql.SQL(
             'INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING'
@@ -257,14 +255,7 @@ class DatabaseManager:
         Returns:
             True if a row was inserted, False if conflict (duplicate) or error
         """
-        if not data:
-            raise ValueError("Data list is empty. Cannot insert row without data.")
-        if not table_name:
-            raise ValueError("Table name is empty. Cannot insert row without a table name.")
-        if not column_names:
-            raise ValueError("Column names list is empty. Cannot insert row without column names.")
-        if len(column_names) != len(data):
-            raise ValueError("Column names count does not match data count.")
+        self._validate_single_insert(table_name, column_names, data)
         if not conflict_column:
             raise ValueError("Conflict column is empty. Cannot upsert without a conflict column.")
 
@@ -303,14 +294,7 @@ class DatabaseManager:
         Returns:
             The ID of the inserted or existing row, or -1 on error
         """
-        if not data:
-            raise ValueError("Data list is empty. Cannot insert row without data.")
-        if not table_name:
-            raise ValueError("Table name is empty. Cannot insert row without a table name.")
-        if not column_names:
-            raise ValueError("Column names list is empty. Cannot insert row without column names.")
-        if len(column_names) != len(data):
-            raise ValueError("Column names count does not match data count.")
+        self._validate_single_insert(table_name, column_names, data)
         if not conflict_column:
             raise ValueError("Conflict column is empty. Cannot upsert without a conflict column.")
 

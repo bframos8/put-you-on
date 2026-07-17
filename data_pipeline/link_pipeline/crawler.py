@@ -1,4 +1,3 @@
-import json
 import re
 import time
 from playwright.sync_api import sync_playwright
@@ -108,7 +107,6 @@ class BandcampCrawler:
             try:
                 #Grab the JSON data from the response
                 data = resp.json()
-                self._save_resp(data)
                 #Extract array of album objects
                 items = data.get("items", []) or data.get("results", [])
                 #Add new album objects to payload list
@@ -119,13 +117,6 @@ class BandcampCrawler:
     
     def _check_session(self) -> None:
         print(f"Total discover payloads collected: {len(self.discover_payloads)}")
-        # For demonstration, print the first 3 payloads
-        #for payload in self.discover_payloads[:3]:
-         #   print(json.dumps(payload, indent=4))
-    
-    def _save_resp(self, resp) -> None:
-        with open("resp.json", 'w') as f:
-            json.dump(resp, f, indent = 4)
 
     def _print_timing_stats(self) -> None:
         if not self.click_times:

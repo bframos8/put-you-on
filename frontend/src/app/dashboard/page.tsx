@@ -1,157 +1,44 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { SongRecCarousel } from "@/components/song-rec-carousel";
 import { LogOut } from "lucide-react";
-
-const TAPE_ITEMS = [
-  "SIDE A",
-  "TRACK LISTING",
-  "FRESH PRESS",
-  "PYO 0412",
-  "MADE WITH EMBEDDINGS",
-  "NO ALGORITHMS, JUST TASTE",
-];
+import { AuthGate } from "@/components/auth-gate";
+import { SongRecCarousel } from "@/components/song-rec-carousel";
 
 export default function Dashboard() {
-  const router = useRouter();
-  const [authed, setAuthed] = useState(false);
-  const [date, setDate] = useState("");
-
-  useEffect(() => {
-    const d = new Date();
-    const opts: Intl.DateTimeFormatOptions = {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    };
-    setDate(d.toLocaleDateString("en-US", opts));
-
-    if (process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true") {
-      setAuthed(true);
-      return;
-    }
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/me`, {
-      credentials: "include",
-    })
-      .then((res) => {
-        if (!res.ok) {
-          router.push("/");
-          throw new Error("Not authenticated");
-        }
-        return res.json();
-      })
-      .then(() => setAuthed(true))
-      .catch(() => {});
-  }, [router]);
-
-  if (!authed) {
-    return (
-      <div className="relative min-h-screen pt-20 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <span className="label text-[color:var(--mist)]">TUNING IN…</span>
-          <p className="font-display text-4xl md:text-5xl leading-[1]">
-            Warming the{" "}
-            <span className="font-display-soft">tape heads.</span>
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="relative min-h-screen pt-20">
-      {/* ─── Tape marquee ─── */}
-      <div className="border-y border-[color:var(--line)] bg-[color:var(--ink)] text-[color:var(--paper)] overflow-hidden">
-        <div className="marquee py-2">
-          <div className="marquee-track label">
-            {Array.from({ length: 6 }).flatMap((_, g) =>
-              TAPE_ITEMS.map((m, i) => (
-                <span key={`${g}-${i}`} className="inline-flex items-center gap-8">
-                  <span>{m}</span>
-                  <span aria-hidden className="text-[color:var(--acid)]">✺</span>
-                </span>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ─── Editorial date plate ─── */}
-      <section className="mx-auto max-w-[1480px] px-6 md:px-10 pt-10 md:pt-14">
-        <div className="flex flex-wrap items-end justify-between gap-4 pb-6 border-b-2 border-[color:var(--ink)]">
-          <div>
-            <span className="label">§ TODAY&rsquo;S DISPATCH</span>
-            <h1
-              className="font-display text-[clamp(3rem,10vw,8rem)] leading-[0.86] mt-3 rise"
-              style={{ animationDelay: "0.05s" }}
-            >
-              <span className="block">The{" "}
-                <span className="font-display-soft">queue</span>,
-              </span>
-              <span className="block">freshly pressed.</span>
-            </h1>
-          </div>
-          <div className="text-right flex flex-col items-end gap-1">
-            <span className="label">ISSUE · {new Date().toISOString().slice(0,10).replace(/-/g,".")}</span>
-            <span className="font-mono text-[0.82rem] text-[color:var(--mist)]">
-              {date}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── Recommendations ─── */}
-      <section
-        className="mx-auto max-w-[1480px] px-6 md:px-10 pt-10 pb-20 rise"
-        style={{ animationDelay: "0.2s" }}
-      >
-        <SongRecCarousel />
-      </section>
-
-      {/* ─── Colophon / logout row ─── */}
-      <section className="border-t-2 border-[color:var(--ink)]">
-        <div className="mx-auto max-w-[1480px] px-6 md:px-10 py-10 grid grid-cols-12 gap-6 items-center">
-          <div className="col-span-12 md:col-span-7">
-            <span className="label text-[color:var(--mist)]">
-              COLOPHON · SET IN FRAUNCES &amp; IBM PLEX MONO
-            </span>
-            <p className="font-display text-2xl md:text-3xl leading-[1.1] mt-2 max-w-[40ch]">
-              Curated by nearest-neighbor vectors and{" "}
-              <span className="font-display-soft">
-                editorial instinct.
-              </span>
-            </p>
-          </div>
-          <div className="col-span-12 md:col-span-5 flex md:justify-end items-center gap-4">
-            <a
-              href="/profile"
-              className="label hover-rule"
-            >
-              ↩ YOUR TOP TEN
-            </a>
-            <button
-              onClick={() => router.push("/logout")}
-              className="inline-flex items-center gap-2 border border-[color:var(--ink)] px-4 py-2 label hover:bg-[color:var(--ink)] hover:text-[color:var(--paper)] transition-colors"
-            >
-              <LogOut size={14} />
-              <span>SIGN OFF</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── Vanity footer ─── */}
-      <section className="border-t border-[color:var(--line)] overflow-hidden">
-        <div
-          className="font-display leading-none text-[clamp(5rem,20vw,18rem)] tracking-[-0.06em] whitespace-nowrap text-center py-3"
-          aria-hidden
+    <div className="relative min-h-screen pt-16 overflow-hidden">
+      <AuthGate>
+        {/* ─── The drop is the first thing you see ─── */}
+        <section
+          className="mx-auto max-w-[1320px] px-5 md:px-10 pt-12 md:pt-16 pb-24 rise"
+          style={{ animationDelay: "0.1s" }}
         >
-          END <span className="font-display-soft">of side A</span>
-        </div>
-      </section>
+          <SongRecCarousel />
+        </section>
+
+        {/* ─── Footer / logout row ─── */}
+        <section className="border-t-2 border-[color:var(--blue)]">
+          <div className="mx-auto max-w-[1320px] px-5 md:px-10 py-14 grid grid-cols-12 gap-6 items-center">
+            <div className="col-span-12 md:col-span-7">
+              <span className="label text-[color:var(--blue)]">The plug</span>
+              <p className="display text-2xl md:text-3xl leading-[1.15] max-w-[36ch] text-white mt-3">
+                Chosen for how close they sound to what you already love.{" "}
+                <span className="ink-pink">Nothing about charts.</span>
+              </p>
+            </div>
+            <div className="col-span-12 md:col-span-5 flex md:justify-end items-center gap-6">
+              <a href="/profile" className="label text-[color:var(--violet)] spray-link">
+                Your top ten
+              </a>
+              <a
+                href="/logout"
+                className="inline-flex items-center gap-2 border border-white/40 px-4 py-2 label text-white hover:bg-white hover:text-black transition-colors"
+              >
+                <LogOut size={14} strokeWidth={2.5} />
+                <span>Log out</span>
+              </a>
+            </div>
+          </div>
+        </section>
+      </AuthGate>
     </div>
   );
 }

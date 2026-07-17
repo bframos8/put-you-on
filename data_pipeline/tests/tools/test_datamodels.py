@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import numpy as np
 
-from data_pipeline.models.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata, Song
+from data_pipeline.models.datamodels import AlbumMetadata, AudioWithMetadata, EmbeddingWithMetadata
 
 
 class TestAlbumMetadata:
@@ -66,19 +66,3 @@ class TestEmbeddingWithMetadata:
         embedding = np.zeros(1280)
         item = EmbeddingWithMetadata(file_path=tmp_path / "track.mp3", embedding=embedding, metadata=meta)
         assert item.embedding.shape == (1280,)
-
-
-class TestSong:
-    def test_create_with_all_fields(self):
-        song = Song(id=1, title="My Song", artist="Artist", album="Album", filepath="/path/to/file.mp3", embedding=[0.1, 0.2])
-        assert song.id == 1
-        assert song.title == "My Song"
-        assert song.artist == "Artist"
-        assert song.album == "Album"
-        assert song.filepath == "/path/to/file.mp3"
-        assert song.embedding == [0.1, 0.2]
-
-    def test_equality(self):
-        a = Song(id=1, title="T", artist="A", album="Al", filepath="f", embedding=[])
-        b = Song(id=1, title="T", artist="A", album="Al", filepath="f", embedding=[])
-        assert a == b

@@ -8,6 +8,7 @@ The shared mock_db fixture wires .first() to the authenticated user for
 get_current_user; each test here additionally stubs the .all() terminal.
 """
 
+from datetime import datetime
 from unittest.mock import MagicMock
 
 from app.db.models import UserTopSong
@@ -24,6 +25,8 @@ def _make_top_song(
     album_title: str | None = "Album Title",
     image_url: str | None = "https://img.example.com/a.jpg",
     spotify_url: str | None = "https://open.spotify.com/track/abc",
+    duration_ms: int | None = None,
+    snapshot_at: datetime | None = None,
 ) -> MagicMock:
     row = MagicMock(spec=UserTopSong)
     row.id = id
@@ -33,6 +36,11 @@ def _make_top_song(
     row.album_title = album_title
     row.image_url = image_url
     row.spotify_url = spotify_url
+    # Set explicitly: with spec=UserTopSong, an un-set real column attribute
+    # returns an auto-child MagicMock — which fails Pydantic's int | None
+    # (duration_ms) and can't be ordered by the route's max() (snapshot_at).
+    row.duration_ms = duration_ms
+    row.snapshot_at = snapshot_at
     return row
 
 
@@ -79,7 +87,18 @@ class TestTopTracksHappyPath:
     def test_empty_snapshot_returns_empty_tracks_list(self, client, valid_session, mock_db):
         _stub_rows(mock_db, [])
         resp = client.get(TOP_TRACKS_URL, cookies={"session": valid_session})
-        assert resp.json() == {"tracks": []}
+        assert resp.json() == {"tracks": [], "last_synced_at": None}
+
+    def test_last_synced_at_reflects_snapshot(self, client, valid_session, mock_db):
+        snap = datetime(2026, 6, 15, 14, 30, 0)
+        _stub_rows(mock_db, [_make_top_song(id=1, snapshot_at=snap)])
+        resp = client.get(TOP_TRACKS_URL, cookies={"session": valid_session})
+        assert resp.json()["last_synced_at"] == snap.isoformat()
+
+    def test_last_synced_at_null_when_rows_have_no_snapshot(self, client, valid_session, mock_db):
+        _stub_rows(mock_db, [_make_top_song(id=1)])
+        resp = client.get(TOP_TRACKS_URL, cookies={"session": valid_session})
+        assert resp.json()["last_synced_at"] is None
 
     def test_response_has_tracks_key(self, client, valid_session, mock_db):
         _stub_rows(mock_db, [_make_top_song(id=1)])
@@ -129,6 +148,12 @@ class TestTopTracksHappyPath:
         track = resp.json()["tracks"][0]
         assert track["duration_ms"] is None
         assert track["popularity"] is None
+
+    def test_duration_ms_flows_through_when_present(self, client, valid_session, mock_db):
+        _stub_rows(mock_db, [_make_top_song(id=1, duration_ms=214000)])
+        resp = client.get(TOP_TRACKS_URL, cookies={"session": valid_session})
+        track = resp.json()["tracks"][0]
+        assert track["duration_ms"] == 214000
 
     def test_multiple_tracks_returned_in_order(self, client, valid_session, mock_db):
         rows = [

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 from ..db.models import Song, UserTopSong
 
@@ -54,8 +56,10 @@ class TopTrackItem(BaseModel):
             album_title=row.album_title,
             image_url=row.image_url,
             album_url=row.spotify_url,
+            duration_ms=row.duration_ms,
         )
 
 
 class TopTracksResponse(BaseModel):
     tracks: list[TopTrackItem] = []
+    last_synced_at: datetime | None = None

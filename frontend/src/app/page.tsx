@@ -1,284 +1,207 @@
+import { ArrowUpRight } from "lucide-react";
 import { SpotifyLoginButton } from "@/components/spotify-login-button";
-import { ArrowDown } from "lucide-react";
 
-const MARQUEE_ITEMS = [
-  "VOL. 07",
-  "DISPATCH N° 0412",
-  "EST. 2025",
-  "SIDE A",
-  "LATE NIGHT EDITORIAL",
-  "NO ALGORITHMS, JUST TASTE",
-  "CURATED IN TRANSIT",
-  "HEADPHONES RECOMMENDED",
-];
-
-const PROMISES = [
+const STEPS = [
   {
     n: "01",
-    title: "You listen.",
+    kicker: "Listen",
+    title: "You play.",
     body:
-      "We pull your top tracks from Spotify — the ones on heavy rotation, the ones you can't stop playing.",
+      "Log in with Spotify and we look at the tracks you keep coming back to. That is the starting point, nothing else.",
+    color: "pink",
   },
   {
     n: "02",
-    title: "We listen back.",
+    kicker: "Match",
+    title: "We match the sound.",
     body:
-      "Audio embeddings, nearest-neighbor search, and a little editorial taste — we pick songs that share the feeling, not just the genre tag.",
+      "We line your music up against everything else and find the songs that actually sound close to it. Not the same genre tag. The same feel.",
+    color: "blue",
   },
   {
     n: "03",
+    kicker: "Drop",
     title: "You get put on.",
     body:
-      "Ten recommendations, delivered daily. No feed. No infinite scroll. A dispatch, not a doom loop.",
+      "Ten songs, once a day. A short list you can finish, picked for how they sound next to what you already love.",
+    color: "yellow",
   },
+] as const;
+
+const SAMPLE = [
+  { t: "Sideways", a: "Citizen", d: "3:28" },
+  { t: "Green Aphrodisiac", a: "Corinne Bailey Rae", d: "3:57" },
+  { t: "Ivy", a: "Frank Ocean", d: "4:09" },
+  { t: "Anthems for a Seventeen Year-Old Girl", a: "Broken Social Scene", d: "4:25" },
+  { t: "Morning Dew", a: "Devendra Banhart", d: "2:45" },
 ];
 
-const MASTHEAD_NUMBERS = [
-  { k: "ISSUE", v: "N° 0412" },
-  { k: "SIDE", v: "A" },
-  { k: "TEMPO", v: "118 BPM" },
-  { k: "SIGNAL", v: "FM 98.7" },
-];
+const inkClass: Record<string, string> = {
+  pink: "ink-pink",
+  blue: "ink-blue",
+  violet: "ink-violet",
+  yellow: "ink-yellow",
+};
 
 export default function Home() {
   return (
-    <div className="relative min-h-screen pt-20">
-      {/* ─── Top marquee ─── */}
-      <div className="border-y border-[color:var(--line)] bg-[color:var(--paper)] overflow-hidden">
-        <div className="marquee py-2">
-          <div className="marquee-track label">
-            {[...MARQUEE_ITEMS, ...MARQUEE_ITEMS, ...MARQUEE_ITEMS].map((m, i) => (
-              <span key={i} className="inline-flex items-center gap-8">
-                <span>{m}</span>
-                <span aria-hidden className="opacity-40">✺</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ─── Hero masthead ─── */}
-      <section className="relative mx-auto max-w-[1480px] px-6 md:px-10 pt-10 md:pt-14">
-        {/* masthead metadata row */}
-        <div className="flex flex-wrap items-end justify-between gap-6 pb-6 border-b-2 border-[color:var(--ink)]">
-          <div className="label num flex flex-wrap gap-x-8 gap-y-1">
-            {MASTHEAD_NUMBERS.map((m) => (
-              <span key={m.k}>
-                <span className="opacity-55">{m.k} /</span>{" "}
-                <span>{m.v}</span>
-              </span>
-            ))}
-          </div>
-          <span className="label">A MUSIC DISPATCH · FRI / SAT / SUN</span>
-        </div>
-
-        {/* hero typographic moment */}
-        <div className="relative grid grid-cols-12 gap-4 md:gap-6 pt-10 md:pt-14 pb-6">
-          {/* hero type */}
-          <div className="col-span-12 lg:col-span-9">
-            <h1 className="font-display text-[clamp(3.6rem,14vw,12.5rem)] leading-[0.82]">
-              <span className="block rise" style={{ animationDelay: "0.05s" }}>
-                Put <span className="font-display-soft">you</span>
-              </span>
-              <span
-                className="block rise pl-[0.06em]"
-                style={{ animationDelay: "0.2s" }}
-              >
-                on the songs
-              </span>
-              <span
-                className="block rise"
-                style={{ animationDelay: "0.35s" }}
-              >
-                <span className="acid-underline">you haven&rsquo;t</span>{" "}
-                <span className="font-display-soft">heard</span>
-              </span>
-              <span
-                className="block rise"
-                style={{ animationDelay: "0.5s" }}
-              >
-                <span className="font-display-soft">yet.</span>
-              </span>
-            </h1>
-          </div>
-
-          {/* side pull-quote */}
-          <aside
-            className="col-span-12 lg:col-span-3 lg:pt-12 fade"
-            style={{ animationDelay: "0.7s" }}
+    <div className="relative min-h-screen overflow-hidden">
+      {/* ─── Hero — fits one screen ─── */}
+      <section className="relative mx-auto max-w-[1320px] px-5 md:px-10 min-h-[calc(100svh-4.5rem)] flex flex-col justify-center pt-20 pb-12">
+        <div className="relative">
+          <span
+            className="label text-[color:var(--pink)] inline-block fade"
+            style={{ animationDelay: "0.05s" }}
           >
-            <div className="flex flex-col gap-5">
-              <span className="label">{/* inline arrow */}— FROM THE EDITORS</span>
-              <p className="font-display text-[1.3rem] leading-[1.25] -tracking-[0.01em]">
-                A handpicked dispatch of music lifted straight from{" "}
-                <span className="font-display-soft">your own ear</span>.
-                Made by nearest-neighbor vectors and nights that went too long.
-              </p>
-              <div className="rule rule-animate" style={{ animationDelay: "1s" }} />
-              <p className="font-mono text-[0.78rem] leading-relaxed text-[color:var(--mist)]">
-                We don&rsquo;t care about your follower count. We care about
-                track&nbsp;04 of the album you&rsquo;ve been replaying. That&rsquo;s
-                the seed.
-              </p>
+            A music plug · one drop a day
+          </span>
+
+          <h1
+            className="mt-5 rise leading-tight"
+            style={{ animationDelay: "0.14s" }}
+          >
+            <span className="display text-[clamp(1.8rem,5vw,3.8rem)] text-white align-baseline">
+              Songs that{" "}
+            </span>
+            <span className="tag tag-pink text-[clamp(2.1rem,6vw,4.6rem)] align-baseline">
+              sound like you.
+            </span>
+          </h1>
+
+          <p
+            className="font-body text-[1.05rem] md:text-[1.15rem] leading-relaxed text-white/70 mt-6 max-w-[44ch] rise"
+            style={{ animationDelay: "0.3s" }}
+          >
+            Log in with Spotify and get ten songs a day, chosen for how close
+            they sound to the music you already play on repeat.
+          </p>
+
+          <div
+            className="flex flex-col sm:flex-row items-start sm:items-center gap-5 mt-9 rise"
+            style={{ animationDelay: "0.4s" }}
+          >
+            <SpotifyLoginButton />
+            <div className="flex items-center gap-3 label text-white/45">
+              <span
+                aria-hidden
+                className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--pink)] blink-dot"
+              />
+              <span>Free · no card</span>
             </div>
-          </aside>
+          </div>
         </div>
 
-        {/* CTA row */}
-        <div
-          className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8 pt-2 pb-14 border-t border-[color:var(--line)] rise"
-          style={{ animationDelay: "0.85s" }}
-        >
-          <div className="flex items-center gap-5">
-            <span className="label num text-[color:var(--mist)]">[ 00:00 ]</span>
-            <SpotifyLoginButton />
-          </div>
-          <div className="flex items-center gap-3 label text-[color:var(--mist)]">
-            <span
-              aria-hidden
-              className="inline-block h-[9px] w-[9px] rounded-full bg-[color:var(--acid)] blink-dot border border-[color:var(--ink)]"
-            />
-            <span>SIGNAL ACQUIRED — AWAITING HANDSHAKE</span>
-          </div>
-        </div>
+        {/* scroll cue in accent */}
+        <span className="absolute bottom-6 left-5 md:left-10 label text-white/30">
+          Scroll ↓ how it works
+        </span>
       </section>
 
       {/* ─── How it works ─── */}
-      <section className="relative mx-auto max-w-[1480px] px-6 md:px-10 py-16 md:py-24">
-        <div className="grid grid-cols-12 gap-6 md:gap-10">
-          <div className="col-span-12 lg:col-span-3">
-            <div className="lg:sticky lg:top-32">
-              <span className="label">§ 01 — METHOD</span>
-              <h2 className="font-display text-5xl md:text-6xl leading-[0.9] mt-4">
-                How we{" "}
-                <span className="font-display-soft">hear</span> you.
-              </h2>
-              <div className="rule mt-6" />
-              <p className="font-mono text-[0.78rem] mt-4 text-[color:var(--mist)] leading-relaxed">
-                Three moves. No tricks. No sponsored placements. No &ldquo;popular
-                right now&rdquo;.
-              </p>
-            </div>
-          </div>
-
-          <ol className="col-span-12 lg:col-span-9 flex flex-col">
-            {PROMISES.map((p, i) => (
-              <li
-                key={p.n}
-                className="grid grid-cols-12 gap-4 md:gap-8 py-8 md:py-12 border-t border-[color:var(--line)] last:border-b group"
-              >
-                <div className="col-span-2 md:col-span-1 font-mono text-[color:var(--mist)]">
-                  <span className="num text-lg">{p.n}</span>
-                </div>
-                <h3 className="col-span-10 md:col-span-5 font-display text-3xl md:text-5xl leading-[0.92]">
-                  {p.title.split(" ").map((w, wi) => (
-                    <span
-                      key={wi}
-                      className={
-                        (i === 1 && wi === 0) || (i === 2 && wi === 2)
-                          ? "font-display-soft"
-                          : ""
-                      }
-                    >
-                      {w}{" "}
-                    </span>
-                  ))}
-                </h3>
-                <p className="col-span-12 md:col-span-6 font-mono text-[0.85rem] leading-[1.65] text-[color:var(--ink)]/80 md:mt-3">
-                  {p.body}
-                </p>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-
-      {/* ─── Sample tracklist aesthetic teaser ─── */}
-      <section className="relative mx-auto max-w-[1480px] px-6 md:px-10 pb-20">
-        <div className="flex items-end justify-between pb-4 border-b-2 border-[color:var(--ink)]">
-          <div>
-            <span className="label">§ 02 — SAMPLE DISPATCH</span>
-            <h2 className="font-display text-4xl md:text-6xl leading-[0.9] mt-3">
-              A page from{" "}
-              <span className="font-display-soft">last week&rsquo;s</span>{" "}
-              issue.
-            </h2>
-          </div>
-          <span className="label num hidden md:inline text-[color:var(--mist)]">
-            PP. 04 — 06
+      <section className="relative mx-auto max-w-[1320px] px-5 md:px-10 py-20 md:py-28 border-t border-white/15">
+        <div className="flex items-baseline justify-between gap-6">
+          <h2 className="display text-3xl md:text-5xl text-white">How it works</h2>
+          <span className="label text-[color:var(--blue)] hidden md:inline">
+            Three steps
           </span>
         </div>
 
-        <ul className="mt-6">
-          {[
-            { t: "Sideways", a: "Citizen", d: "3:28" },
-            { t: "Comme des Garçons (Like the Boys)", a: "Rina Sawayama", d: "2:58" },
-            { t: "Green Aphrodisiac", a: "Corinne Bailey Rae", d: "3:57" },
-            { t: "Anthems for a Seventeen Year-Old Girl", a: "Broken Social Scene", d: "4:25" },
-            { t: "Ivy", a: "Frank Ocean", d: "4:09" },
-            { t: "Morning Dew", a: "Devendra Banhart", d: "2:45" },
-          ].map((s, i) => (
-            <li
-              key={i}
-              className="flex items-baseline border-b border-dashed border-[color:var(--line)] py-3 group"
-            >
-              <span className="num label w-10 text-[color:var(--mist)]">
-                {(i + 1).toString().padStart(2, "0")}
-              </span>
-              <span className="font-display text-xl md:text-2xl leading-tight">
-                {s.t}
-              </span>
-              <span className="dotted-leader" />
-              <span className="font-mono text-[0.8rem] text-[color:var(--mist)] hidden md:inline">
-                {s.a}
-              </span>
-              <span className="num label w-14 text-right">{s.d}</span>
-            </li>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-12 md:gap-10 pt-16">
+          {STEPS.map((s) => (
+            <article key={s.n} className="flex flex-col">
+              <div className="flex items-baseline justify-between">
+                <span className={"num display text-2xl " + inkClass[s.color]}>
+                  {s.n}
+                </span>
+                <span className={"tag text-[1.6rem] tag-" + s.color}>
+                  {s.kicker}
+                </span>
+              </div>
+              <div
+                className="mt-4 pt-6 border-t"
+                style={{ borderColor: `var(--${s.color})` }}
+              />
+              <h3 className="display text-3xl md:text-[2.2rem] text-white">
+                {s.title}
+              </h3>
+              <p className="font-body text-[1rem] leading-relaxed text-white/65 mt-4 max-w-[34ch]">
+                {s.body}
+              </p>
+            </article>
           ))}
-        </ul>
-
-        <p className="label mt-6 text-[color:var(--mist)]">
-          ↳ your issue arrives tuned to your ear, not this one.
-        </p>
-      </section>
-
-      {/* ─── Final CTA ─── */}
-      <section className="relative border-y-2 border-[color:var(--ink)] bg-[color:var(--ink)] text-[color:var(--paper)] overflow-hidden">
-        <div className="mx-auto max-w-[1480px] px-6 md:px-10 py-20 md:py-28 grid grid-cols-12 gap-6 items-center">
-          <div className="col-span-12 md:col-span-8">
-            <span className="label text-[color:var(--acid)]">[ JOIN THE DISPATCH ]</span>
-            <h2 className="font-display text-[clamp(2.8rem,8vw,7rem)] leading-[0.88] mt-4">
-              Ten songs.{" "}
-              <span className="font-display-soft">Every day.</span>{" "}
-              <span className="acid-underline text-[color:var(--ink)]">
-                Yours.
-              </span>
-            </h2>
-          </div>
-          <div className="col-span-12 md:col-span-4 flex md:justify-end">
-            <SpotifyLoginButton className="bg-[color:var(--paper)] text-[color:var(--ink)]" />
-          </div>
-        </div>
-
-        {/* oversize vanity type at bottom */}
-        <div className="overflow-hidden border-t border-[color:var(--paper)]/20">
-          <div
-            className="font-display leading-none text-[clamp(7rem,26vw,22rem)] tracking-[-0.06em] whitespace-nowrap text-center py-3"
-            aria-hidden
-          >
-            P · Y · O <span className="font-display-soft">/ 2026</span>
-          </div>
         </div>
       </section>
 
-      {/* ─── Colophon ─── */}
-      <footer className="mx-auto max-w-[1480px] px-6 md:px-10 py-10 grid grid-cols-12 gap-6">
-        <div className="col-span-12 md:col-span-6 label flex items-center gap-3">
-          <ArrowDown size={14} />
-          <span>Scroll set · Printed on the web · No trackers</span>
+      {/* ─── Sample drop ─── */}
+      <section className="relative bg-[color:var(--blue)] text-black">
+        <div className="mx-auto max-w-[1320px] px-5 md:px-10 py-20 md:py-28">
+          <div className="flex flex-wrap items-baseline justify-between gap-4 pb-5 border-b-2 border-black/80">
+            <div>
+              <span className="tag text-3xl text-black">A real drop</span>
+              <h2 className="display text-3xl md:text-5xl text-black mt-2">
+                What a drop looks like
+              </h2>
+            </div>
+            <span className="font-body text-[0.95rem] text-black/60 max-w-[22ch]">
+              Yours will sound like you, not this.
+            </span>
+          </div>
+
+          <ul className="mt-2">
+            {SAMPLE.map((s, i) => (
+              <li
+                key={i}
+                className="flex items-baseline border-b border-black/20 py-4 group"
+              >
+                <span className="num label w-10 text-black/55">
+                  {(i + 1).toString().padStart(2, "0")}
+                </span>
+                <span className="display text-xl md:text-2xl text-black">
+                  {s.t}
+                </span>
+                <span className="dotted-leader !border-black/30" />
+                <span className="font-body text-[0.9rem] text-black/65 hidden md:inline">
+                  {s.a}
+                </span>
+                <span className="num label w-16 text-right text-black/60">
+                  {s.d}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
-        <div className="col-span-12 md:col-span-6 label text-right text-[color:var(--mist)]">
-          © PUT YOU ON — EDITORIAL, LTD.
+      </section>
+
+      {/* ─── Final CTA — the pink signal moment ─── */}
+      <section className="relative bg-[color:var(--pink)] text-black">
+        <div className="mx-auto max-w-[1320px] px-5 md:px-10 py-24 md:py-32">
+          <span className="tag text-4xl md:text-5xl text-black">Get put on</span>
+          <h2 className="mt-5 max-w-[14ch] display text-[clamp(2.6rem,8vw,6rem)] text-black leading-[0.92]">
+            Ten songs a day, picked by how they sound.
+          </h2>
+          <div className="mt-12">
+            <a
+              href={`${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/v1/auth/spotify/login`}
+              className="group inline-flex items-center gap-3 bg-black px-7 py-4 text-white transition-transform duration-300 hover:-translate-y-[3px]"
+            >
+              <span className="display text-2xl leading-none">Plug me in</span>
+              <ArrowUpRight
+                size={22}
+                strokeWidth={2.5}
+                className="transition-transform duration-300 group-hover:rotate-45"
+              />
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── Footer ─── */}
+      <footer className="border-t border-white/15">
+        <div className="mx-auto max-w-[1320px] px-5 md:px-10 py-10 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+          <span className="tag text-2xl">
+            put you <span className="ink-pink">on.</span>
+          </span>
+          <span className="label text-white/30">© Put You On · 2026</span>
         </div>
       </footer>
     </div>

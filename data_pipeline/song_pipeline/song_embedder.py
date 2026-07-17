@@ -77,6 +77,8 @@ class SongEmbedder(PipelineStage):
         return loader()
 
     def _embed_song(self, song):
+        # Mirrored in the backend's SpotifyIngestService._embed (single source
+        # of truth by convention) — keep this guard in sync across both apps.
         frame_embeddings = self.model(song)
         if not isinstance(frame_embeddings, np.ndarray) or frame_embeddings.ndim == 0 or len(frame_embeddings) == 0:
             raise ValueError(f"Model returned no frames — audio may be too short ({len(song) / 16000:.2f}s)")

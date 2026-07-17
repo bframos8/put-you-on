@@ -1,0 +1,77 @@
+# Frontend Optimization — Client/Server Boundary Refactor
+
+**Branch:** V3-Frontend
+**Approach:** Option A — keep data fetching client-side, server-render the static
+chrome; push `"use client"` down to the smallest interactive leaves. No backend
+changes, auth untouched.
+**Scope:** Boundary refactor + dead-code removal only. Asset perf (next/image,
+woff2 fonts) intentionally out of scope. Loading-state UX may be improved.
+
+## Why not full SSR of data
+Auth is cookie-based against a separate backend origin (`NEXT_PUBLIC_API_URL`).
+That cookie is scoped to the backend's domain, so the Next.js server can't read
+it and can't fetch user data server-side without proxying the API (a backend
+re-architecture we explicitly deferred). So data stays client-fetched; only the
+static frame moves to the server.
+
+## Current state (baseline)
+- `layout.tsx` — server (optimal already).
+- `page.tsx` (home) — server; only client piece is the login button.
+- `dashboard/page.tsx` — fully `"use client"` just for an auth gate.
+- `profile/page.tsx` — fully `"use client"`; large static layout bundled with data fetch.
+- `callback/page.tsx` — client (needs `useSearchParams`). Leave as-is.
+- `logout/page.tsx` — client; result screen mostly state-bound. Leave as-is (low value).
+- `navbar-component-01/page.tsx` — dead demo route. Delete.
+- `Navbar` — client (countdown, mobile menu, auth nav). Leave as-is.
+- `SpotifyLoginButton` — client, only does `window.location.href`. Convert to server `<a>`.
+- `SongRecCarousel` — client (polling/localStorage/pagination). Leave as-is.
+
+## Plan / task checklist
+- [x] 1. `components/tuning-loader.tsx` (server) — shared "Tuning in / One second" loader.
+- [x] 2. `components/auth-gate.tsx` (client) — `/auth/me` check + redirect; renders children when authed; shows TuningLoader while checking.
+- [x] 3. `components/profile-content.tsx` (client) — profile data island: auth + top_tracks fetch + identity header + hover track list. Keeps its own auth read (consumes `/auth/me` body). Receives static `footer` as a server-rendered slot.
+- [x] 4. `dashboard/page.tsx` -> server component; `<AuthGate>` wraps carousel + static footer; footer "Log out" button -> `<a href="/logout">`.
+- [x] 5. `profile/page.tsx` -> server component; static `ProfileFooter` server-rendered + passed to `<ProfileContent/>` island for the data-bound middle.
+- [x] 6. `spotify-login-button.tsx` -> dropped `"use client"`, now a server `<a href={.../login}>`. Home page is now zero-client-JS.
+- [x] 7. Deleted `app/navbar-component-01/` dead demo route.
+- [x] 8. Review + `next build` to confirm nothing broke. ✅ Build passes; all routes prerender static. My files lint-clean.
+
+## Notes during implementation
+- Tailwind `suggestCanonicalClasses` lint warnings (e.g. `text-[color:var(--pink)]`
+  vs `text-(--pink)`) are pre-existing codebase convention; left as-is for consistency.
+- Profile uses its own auth read rather than `AuthGate` to avoid a duplicate
+  `/auth/me` call, since it needs the response body for the identity header.
+
+## Net effect (target)
+- Home page: zero client JS (server chrome + layout Navbar only).
+- Dashboard/profile: static frame server-rendered; only the small auth/data island hydrates.
+- Loading becomes a spinner inside an already-painted page.
+
+## Progress log
+- (init) Plan written, awaiting implementation.
+- (done) All 8 tasks complete. `next build` passes; /, /callback, /dashboard,
+  /logout, /profile all prerender as static. New/changed files are lint-clean.
+  5 remaining eslint errors are pre-existing react-hooks issues in untouched
+  files (callback, logout, navbar component, song-rec-carousel) — out of scope.
+
+## Result vs target
+- Home (`/`): now zero client JS of its own (login button is a server `<a>`);
+  only the layout's Navbar hydrates.
+- Dashboard: page is a server component; only `<AuthGate>` + `<SongRecCarousel>`
+  hydrate. Footer (incl. logout, now an `<a>`) is server-rendered.
+- Profile: page is a server component; static footer server-rendered and passed
+  into the `<ProfileContent>` island, which is the only hydrated part.
+- Removed dead `/navbar-component-01` route from the production bundle.
+
+## Follow-up: pre-existing lint cleanup (done)
+Fixed all 7 pre-existing react-hooks / next lint errors across untouched files:
+- `callback/page.tsx` — derived error from `searchParams` at render instead of
+  `setState`-in-effect; dropped `useState`.
+- `navbar-component-01.tsx` — hoisted `BYPASS_AUTH`, set it as initial state
+  (no synchronous `setState` in effect); logo `<a href="/">` -> `<Link>`.
+- `logout/page.tsx` — "Back home" `<a href="/">` -> `<Link>`.
+- `song-rec-carousel.tsx` — broke the `fetchRecs`/`startPolling` declaration
+  cycle with a `fetchRecsRef`; replaced the date `useState`+effect with a
+  `useMemo` (+ `suppressHydrationWarning`); documented the one remaining
+  localStorage-cache `setState`-in-effect (must be post-mount; rule false positive).
+Result: `npx eslint` exits 0 (no errors/warnings); `next build` passes.

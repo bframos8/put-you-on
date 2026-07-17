@@ -22,13 +22,3 @@ class EmbeddingWithMetadata:
     file_path: Path
     embedding: np.ndarray
     metadata: AlbumMetadata
-
-@dataclass
-class Song:
-    """Legacy song dataclass - kept for compatibility"""
-    id: int
-    title: str
-    artist: str
-    album: str
-    filepath: str
-    embedding: list

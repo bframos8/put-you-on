@@ -1,0 +1,199 @@
+# .claude-frontend-V2 — Put You On / Frontend Redesign Brief
+
+> Context file for the V2 frontend redesign. Read this before touching any UI.
+> Created 2026-06-08 via the `frontend-design` skill.
+
+---
+
+## 1. Original request (verbatim intent)
+
+> Remake the frontend design. Plan first, ask for clarification — no assumptions.
+> Use `reference/PYO_design_guidelines.png` as the visual reference.
+> - Body text font: **Kohinoor Telugu**
+> - Accent font: **Smiley Sans** (得意黑)
+> - Second accent font: **behance DX Burst** (graffiti tag face)
+> - Palette: `#ABFC68`, `#000000`, `#FFFFFF`, `#744DCC`, `#E6628E`
+
+The reference is the brand **guidelines sheet**, not a layout comp. It establishes the
+fonts, the five-color palette, and the *attitude* via three reference covers
+(graffiti album art, a bold purple "THANK YOU" mixtape, a green/honey radio flyer).
+Read it as a mood/identity board — we design the actual layouts.
+
+## 2. Decisions locked with the user (2026-06-08)
+
+| Question | Decision |
+|---|---|
+| **Fonts** | User provides the real font files. We wire them via `next/font/local`. |
+| **Scope** | **Every screen** — landing, dashboard, profile, logout, callback, navbar. |
+| **Base mood** | **Black base, loud poster** — dark gallery-wall canvas, screen-printed color accents, DX Burst graffiti tags as hero moments. |
+| **Voice** | **Rewrite the copy** — drop the old "editorial dispatch / VOL. 07 / newspaper" language for a street / mixtape / put-you-on voice. Same product meaning, new tone. |
+
+## 3. What "Put You On" is (product context)
+
+Music discovery app. User logs in with Spotify → we pull their top tracks → audio
+embeddings + nearest-neighbor search → hand back **10 fresh song recs daily** (hard
+10/day limit). No infinite feed. The whole pitch: *a friend who puts you on to new music.*
+
+Stack: **Next.js 16 (app router) + React 19 + Tailwind v4** (CSS-first `@theme`, zero
+radius / sharp corners today). Animation lib `motion` is already installed. Existing
+screens:
+
+- `src/app/page.tsx` — landing (login entry)
+- `src/app/dashboard/page.tsx` — daily recs (`song-rec-carousel`)
+- `src/app/profile/page.tsx` — Spotify profile + top-tracks "taste" page
+- `src/app/logout/page.tsx`, `src/app/callback/page.tsx`
+- `src/components/.../navbar-component-01` — shared nav
+- `src/components/spotify-login-button.tsx`, `song-rec-carousel.tsx`
+- `src/app/globals.css` — current editorial design system (to be replaced)
+
+---
+
+## 4. V2 design direction — "STREET PRESS / MIXTAPE WALL"
+
+**One-line concept:** a black gallery wall plastered with show-poster + mixtape-insert
+energy, where acid green is the *"put-on" signal light* and graffiti tags shout the
+loudest moments. Discovery as something hand-passed, not algorithm-fed.
+
+**The one unforgettable thing:** oversized **behance DX Burst** graffiti tags — the
+wordmark and section stamps look spray-painted onto the page, with screen-print
+mis-registration (offset color ghosts) so type feels physically printed, not rendered.
+
+### Type system (3 roles, matching the brief)
+
+| Role | Font | CSS var | Used for |
+|---|---|---|---|
+| **Burst / hero tag** | behance DX Burst | `--font-burst` | wordmark, giant section stamps, the "10" rec counter, vanity footer type. Sparingly — it's the shout. |
+| **Accent / display** | Smiley Sans (得意黑) | `--font-accent` | headlines, big UI numbers, buttons, nav, labels, track titles. The workhorse loud voice. |
+| **Body / read** | Kohinoor Telugu | `--font-body` | paragraphs, metadata, captions, descriptions. Warm, humanist, calm counterweight. |
+
+Rule of thumb: **Body is the only thing you read in sentences. Accent is everything
+punchy. Burst is rare and huge.** Never set body copy in Burst.
+
+### Color tokens (exact hex from brief)
+
+```
+--lime:   #ABFC68   /* PRIMARY signal — the "put on" / active / acid green */
+--black:  #000000   /* base canvas */
+--white:  #FFFFFF   /* paper insets, primary text on black */
+--violet: #744DCC   /* secondary screenprint ink */
+--pink:   #E6628E   /* secondary screenprint ink / energy accent */
+```
+
+Usage discipline (dominant + sharp accents, not evenly distributed):
+- **Black** is ~70% of every screen (the wall).
+- **White** carries body text and the occasional "pasted paper" card.
+- **Lime** = the brand signal: primary CTAs, active states, the rec count, links,
+  selection highlight. One hero use per viewport.
+- **Violet + Pink** = supporting screen-print inks for color-blocking, tags, hover
+  states, halftone fills. Used in pairs for the mis-registration ghosting.
+
+### Texture & atmosphere (never flat black)
+
+- Keep a **grain/noise** overlay (already exists, retune for black base).
+- **Halftone dot** fields behind hero type (CSS radial-gradient dots).
+- **Screen-print mis-registration**: duplicate hero type offset 2–4px in violet/pink
+  behind the white/lime layer.
+- **Taped / torn-poster** edges on "pasted" cards (slight rotation, tape strips,
+  drop shadows as `box-shadow` hard offsets — no blur, print-flat).
+- **Sticker rotations**: small elements rotated 2–6°, peel-on-hover.
+- **Marquee tickers** in Accent caps for energy bands between sections.
+- Sharp corners stay (radius 0) — print, not glass.
+
+### Motion (high-impact moments, mostly CSS)
+
+- **Page-load slam-in**: hero tag + posters stagger in with a hard cubic-bezier
+  "stamp" (slight overshoot + settle), via `animation-delay`.
+- Marquees scroll infinitely.
+- **Hover = sticker peel / rotate / spray-underline** on links and cards.
+- Rec reveal on dashboard: cards flip/snap in one at a time.
+- Respect `prefers-reduced-motion`.
+
+---
+
+## 5. Fonts — drop-in contract
+
+User provides the files. **Place them here:**
+
+```
+frontend/src/assets/fonts/
+  KohinoorTelugu-Regular.(otf|ttf)      ← body  (Medium/Bold optional but nice)
+  KohinoorTelugu-Medium.(otf|ttf)
+  KohinoorTelugu-Bold.(otf|ttf)
+  SmileySans-Bold.(otf|ttf|woff2)       ← accent (得意黑 / Smiley Sans Oblique works too)
+  BehanceDXBurst.(otf|ttf)              ← burst  (the graffiti tag face)
+```
+
+Wiring: `next/font/local` in `src/app/layout.tsx`, exposing
+`--font-body`, `--font-accent`, `--font-burst`, mapped in `globals.css @theme`.
+Smiley Sans is open-source (SIL/its own license) and can be self-hosted; if the user
+prefers, we fetch it ourselves. Kohinoor Telugu + DX Burst must come from the user.
+
+Until files land, the build falls back: body → humanist sans stack, accent → heavy
+grotesque, burst → a bold display fallback, so layout is testable before fonts arrive.
+
+---
+
+## 6. Implementation plan
+
+**Phase 0 — Foundation (do first, once fonts are dropped)**
+1. `layout.tsx`: swap `next/font/google` (Fraunces/Plex Mono) → `next/font/local`
+   for the 3 brand fonts; update `<metadata>` voice.
+2. `globals.css`: rebuild design system — new tokens (`--lime/black/white/violet/pink`),
+   `@theme` mapping, type utilities (`.font-burst/.font-accent/.font-body`, `.tag`,
+   `.label`), textures (grain retune, halftone, mis-registration, tape/sticker),
+   motion keyframes (`stamp-in`, marquee, `spray-underline`, sticker-peel).
+
+**Phase 1 — Shared chrome**
+3. Navbar: black bar, Burst wordmark, Accent links, lime active state, sticky.
+4. `spotify-login-button.tsx`: lime "PUT ME ON" sticker button w/ print-offset hover.
+
+**Phase 2 — Screens (rewrite copy as we go)**
+5. **Landing** (`page.tsx`): hero graffiti tag wordmark + halftone, the 3-step
+   "how we put you on" as pasted posters, sample-rec wall, loud final CTA, footer
+   vanity tag. New street voice replacing dispatch language.
+6. **Dashboard**: "today's 10" as a mixtape wall / poster grid; retune
+   `song-rec-carousel`; 10/day counter in Burst; daily date stamp.
+7. **Profile**: Spotify identity as a pasted ID card; top tracks as a tag wall;
+   taste descriptors as stickers.
+8. **Logout / Callback**: on-brand minimal states (loading spray, "see you" tag).
+
+**Phase 3 — Polish**
+9. Reduced-motion pass, responsive (mobile-first poster stacking), contrast/a11y
+   check (lime-on-black + body legibility), remove dead editorial utilities.
+
+### Build order rationale
+Foundation → chrome → landing (sets the language) → app screens → polish.
+Landing is built first among screens because it locks the visual vocabulary the
+others inherit.
+
+---
+
+## 7. Build status & font swap (as of 2026-06-08)
+
+**Built:** every screen + shared chrome, black-base poster aesthetic, copy rewritten.
+`next build` passes (9 routes). All work is in `Feature-FasterRecommendations` branch,
+uncommitted.
+
+**Fonts currently wired (in `layout.tsx`):**
+| Role | var | Currently | Status |
+|---|---|---|---|
+| accent | `--font-accent` | **Smiley Sans** (self-hosted `src/assets/fonts/SmileySans-Oblique.woff2`) | ✅ final |
+| body | `--font-body` | **Hind** (next/font/google) | ⏳ SUBSTITUTE for Kohinoor Telugu |
+| burst | `--font-burst` | **Permanent Marker** (next/font/google) | ⏳ SUBSTITUTE for behance DX Burst |
+
+**To swap a substitute for the real file:**
+1. Drop the file in `src/assets/fonts/` (e.g. `KohinoorTelugu-Regular.woff2`,
+   `BehanceDXBurst.woff2`).
+2. In `layout.tsx`, replace the matching `next/font/google` import with a
+   `localFont({ src: "../assets/fonts/<file>", variable: "--font-body" | "--font-burst" })`.
+3. Remove the now-unused google import. Nothing in globals.css/components changes —
+   they only reference the CSS variables.
+
+The `.tag` / `.tag-flat` graffiti treatment lives in `globals.css`; once real DX Burst
+lands it will look markedly more "spray tag" than the Permanent Marker placeholder.
+
+## 8. Still open
+- Drop the two real font files (Kohinoor Telugu + behance DX Burst) and swap per above.
+- Visual QA pass on a running server (build verified, pixels not yet eyeballed).
+- Any per-screen copy to preserve verbatim (all marketing copy was rewritten to the
+  new street/plug voice).

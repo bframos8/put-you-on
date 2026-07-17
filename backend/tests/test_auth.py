@@ -80,6 +80,20 @@ class TestSpotifyLogin:
         for state in ["s1", "s2", "s3"]:
             assert state in app.state.oauth_states
 
+    def test_login_sweeps_expired_states(self, client):
+        """S5: logging in evicts stale states so the dict can't grow unbounded."""
+        from app.main import app
+
+        app.state.oauth_states["stale"] = time.time() - 700  # > 600s default TTL
+        with patch(
+            "app.api.v1.auth.auth_service.get_auth_url",
+            return_value=("https://accounts.spotify.com/authorize?state=fresh", "fresh"),
+        ):
+            client.get(f"{PREFIX}/spotify/login", follow_redirects=False)
+
+        assert "stale" not in app.state.oauth_states  # swept
+        assert "fresh" in app.state.oauth_states      # new one kept
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # /auth/spotify/callback
@@ -151,6 +165,19 @@ class TestSpotifyCallback:
         )
         assert resp.status_code in (302, 307)
         assert "state_mismatch" in resp.headers["location"]
+
+    def test_expired_state_redirects_with_state_mismatch(self, client):
+        """S5: a state older than OAUTH_STATE_TTL_SECONDS is rejected and consumed."""
+        from app.main import app
+
+        app.state.oauth_states["old_state"] = time.time() - 700  # > 600s default TTL
+        resp = client.get(
+            f"{PREFIX}/spotify/callback?code=code&state=old_state",
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 307)
+        assert "state_mismatch" in resp.headers["location"]
+        assert "old_state" not in app.state.oauth_states  # consumed, not left to leak
 
     def test_spotify_error_param_redirects_with_that_error(self, client):
         """If Spotify sends ?error=access_denied, we forward it."""
@@ -294,6 +321,45 @@ class TestMe:
         wrong_salt_token = serializer.dumps(1, salt="wrong-salt")
         resp = client.get(f"{PREFIX}/me", cookies={"session": wrong_salt_token})
         assert resp.status_code == 401
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# S2 — no sensitive data in logs (regression)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestNoSensitiveLogging:
+    """Guards the S2 fix: session tokens, OAuth codes, and tracebacks must never
+    reach stdout/logs. See agents/s2-debug-logging-leak-fix-plan.md."""
+
+    def test_authenticated_request_does_not_log_session_token(
+        self, client, valid_session, capsys
+    ):
+        resp = client.get(f"{PREFIX}/me", cookies={"session": valid_session})
+        assert resp.status_code == 200
+
+        out = capsys.readouterr().out
+        assert valid_session not in out
+        assert "DEBUG get_current_user cookies" not in out
+
+    def test_failed_callback_does_not_log_code_or_traceback(self, client, capsys):
+        _seed_state(client, "leak_state")
+        secret_code = "super_secret_oauth_code"
+        exc_detail = "token endpoint blew up with secret detail"
+        with patch(
+            "app.api.v1.auth.auth_service.exchange_code",
+            new=AsyncMock(side_effect=Exception(exc_detail)),
+        ):
+            resp = client.get(
+                f"{PREFIX}/spotify/callback?code={secret_code}&state=leak_state",
+                follow_redirects=False,
+            )
+
+        assert "auth_failed" in resp.headers["location"]
+
+        out = capsys.readouterr().out
+        assert secret_code not in out
+        assert exc_detail not in out
+        assert "Traceback (most recent call last)" not in out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
