@@ -14,7 +14,6 @@ from slowapi.errors import RateLimitExceeded
 
 from .core.daily import DAILY_LIMIT_BYPASS
 from .db.database import engine
-from .db.models import Base
 from .services.spotify_ingest_service import SpotifyIngestService
 from .api.v1 import auth, health, songs
 from .core.limiter import limiter
@@ -22,7 +21,8 @@ from .core.limiter import limiter
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    # Schema is owned by Alembic (`alembic upgrade head`), the single source of
+    # truth. Do not recreate tables here — see gameplan 1.2.
     app.state.ingest_service = SpotifyIngestService()
     app.state.oauth_states = {}
     app.state.processing_users = set()

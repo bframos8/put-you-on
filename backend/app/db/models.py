@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Enum, ForeignKey, Integer, Text
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Enum, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
@@ -46,6 +46,7 @@ class Artist(Base):
 
 class Album(Base):
     __tablename__ = "albums"
+    __table_args__ = (UniqueConstraint("url", name="uq_albums_url"),)
 
     id = Column(Integer, primary_key=True)
     title = Column(Text, default="Void")
@@ -68,6 +69,7 @@ class Album(Base):
 
 class Song(Base):
     __tablename__ = "songs"
+    __table_args__ = (UniqueConstraint("album_id", "title", name="uq_songs_album_id_title"),)
 
     id = Column(Integer, primary_key=True)
     title = Column(Text)
@@ -113,12 +115,17 @@ class UserTopSong(Base):
 
 class UserRecommendation(Base):
     __tablename__ = "user_recommendations"
+    __table_args__ = (
+        Index("ix_user_recommendations_user_date", "user_id", "dispatch_date"),
+    )
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     song_id = Column(Integer, ForeignKey("songs.id"), nullable=False)
     query_song_id = Column(Integer, ForeignKey("songs.id"))
-    dispatch_date = Column(Date, index=True)
+    # Queried only as (user_id, dispatch_date), covered by the composite index in
+    # __table_args__; no standalone dispatch_date index (it was never on the live DB).
+    dispatch_date = Column(Date)
     recommended_at = Column(DateTime, default=datetime.now)
 
     user = relationship("User", back_populates="recommendations")
