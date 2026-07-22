@@ -158,9 +158,23 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Compose healthchecks, nginx upstream checks, the deploy script's "is it back up?"
   gate, and external uptime monitors all need a cheap liveness/readiness signal.
 
-- [ ] **1.2 Make Alembic the single schema authority; stop `create_all` in production.**
+- [x] **1.2 Make Alembic the single schema authority; stop `create_all` in production.**
   *(Absorbs deferred item **P6** — see
   [backend-optimization-deferred.md](../backend/agents/backend-optimization-deferred.md).)*
+  > **Code landed 2026-07-17 (squash approach).** The 8-migration chain was
+  > **squashed to a single baseline root**
+  > [45f91add221e](../backend/alembic/versions/45f91add221e_baseline_schema.py)
+  > (`down_revision=None`) that `CREATE TABLE`s the full current schema + the `vector`
+  > extension + `work_status_enum` + the `songs_fill_genre` trigger; the old 8 migrations
+  > were deleted. The models now declare `uq_albums_url`, `uq_songs_album_id_title`, and
+  > the composite `ix_user_recommendations_user_date` (previously only in migrations) so
+  > models are the honest source of truth. `Base.metadata.create_all` was **removed
+  > outright** from [main.py](../backend/app/main.py) (not flag-guarded). Verified on a
+  > throwaway pgvector container: `upgrade head` succeeds on an empty DB, the
+  > `--autogenerate` drift diff is empty, `downgrade base` + re-up is clean, and all 146
+  > backend tests pass. The **HNSW index is intentionally not in the baseline** (belongs
+  > to P5b/10.2). **Remaining (not code — executed at cutover):** the live-RDS
+  > `alembic stamp 45f91add221e` (10.1) and the deploy `alembic upgrade head` step (8.3).
   **How:**
   (a) **Author a baseline `op.create_table` root migration.** The current root
   ([ad1aecf9f82f](../backend/alembic/versions/ad1aecf9f82f_initial_schema.py)) only
@@ -567,12 +581,16 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [ ] **10.1 Reconcile + stamp live RDS, then run migrations and verify schema.**
   **How:** Take an RDS snapshot first. Execute 1.2's audit: confirm the live
-  `alembic_version` (last verified `b8c9d0e1f2a3`, matching the pre-1.2 repo head),
-  `alembic stamp` onto the re-rooted chain from 1.2(a), then `alembic upgrade head`;
-  confirm tables/indexes/`vector` columns match the models.
+  `alembic_version` is `b8c9d0e1f2a3` (the pre-1.2 repo head — now **deleted** by the
+  squash, so it no longer exists in the chain). Then **`alembic stamp 45f91add221e`** to
+  point the live DB at the new squashed baseline
+  ([45f91add221e](../backend/alembic/versions/45f91add221e_baseline_schema.py)) — `stamp`
+  only rewrites `alembic_version`, it does **not** re-run any `CREATE TABLE`, so it's safe
+  against the already-populated RDS. Then `alembic upgrade head` (a no-op at cutover — the
+  baseline *is* head) and confirm tables/indexes/`vector` columns match the models.
   **Why:** This is the moment the 1.2 reconciliation pays off — verify before traffic, not
-  after. Skipping the stamp risks duplicate-column failures or an accidental hour-long
-  index build (see 1.2b).
+  after. Without the stamp, the deploy's `alembic upgrade head` would find the live
+  `b8c9d0e1f2a3` missing from the chain and error (a safe, loud failure — not data loss).
 
 - [ ] **10.2 Finish P5b — rebuild the HNSW index (launch gate).**
   **How:** Run the Path A runbook in
@@ -641,6 +659,12 @@ is the last thing you wire because it automates a process you've already proven 
 
 - **`data_pipeline` deployment** — packaging and scheduling (cron/systemd/EventBridge) is a
   separate effort once the web app is live.
+  - *Note (1.2 cleanup, 2026-07-17):* the old `data_pipeline/db/init_db.py` — a dormant,
+    stale, destructive (`DROP TABLE … CASCADE`) hand-written schema bootstrap and a second
+    schema authority — was **deleted** as part of 1.2. When the pipeline is deployed, any
+    fresh-DB setup it needs should run `alembic upgrade head`, keeping Alembic the single
+    authority. (Its orphaned helper `data_pipeline/db/initializer.py`, now used only by its
+    own unit test, can be removed too whenever the pipeline work resumes.)
 - **Zero-downtime deploys** — current plan accepts brief recreate downtime; blue/green is a
   later upgrade.
 - **Model binary in git (audit H2)** — the 18 MB `.pb` committed twice

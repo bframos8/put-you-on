@@ -6,8 +6,9 @@
 > queue: **P5b** only).
 >
 > **Updated 2026-07-09:** A3/A4/A5/A6 shipped → completed; A7 deferred (auth is a later
-> workstream); P6 deferred (folds into deploy hardening / Phase 1.2). What stays parked
-> here: **A1, A2, A7, P6, P1/P2, and Observability Phase 1.**
+> workstream); P6 deferred (folds into deploy hardening / Phase 1.2).
+> **Updated 2026-07-17:** P6 **done** as gameplan 1.2 (see below). What stays parked
+> here: **A1, A2, A7, P1/P2, and Observability Phase 1.**
 >
 > Each entry states **why** it's deferred and the **trigger to revisit**.
 
@@ -89,7 +90,15 @@ Build the test infra first — it's the actual prerequisite.
 
 ---
 
-## P6 — drop `create_all`; make Alembic the single schema authority
+## P6 — drop `create_all`; make Alembic the single schema authority — ✅ DONE (2026-07-17)
+
+> **Resolved** as deployment-gameplan **1.2**. The migration chain was squashed to a
+> single baseline root
+> [45f91add221e](../alembic/versions/45f91add221e_baseline_schema.py) and
+> `Base.metadata.create_all` was removed from [main.py](../app/main.py). Models now
+> declare the previously-migration-only constraints/index. Verified on a throwaway
+> pgvector DB (empty-DB `upgrade head` + empty autogenerate drift + 146 tests green).
+> Remaining live-RDS `alembic stamp 45f91add221e` runs at cutover (gameplan 10.1).
 
 **What:** [main.py:25](../app/main.py#L25) runs `Base.metadata.create_all` at boot, but no
 migration runs `op.create_table` for the six base tables (the root

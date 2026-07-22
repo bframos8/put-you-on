@@ -111,7 +111,8 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
 ### Phase A — Identity: login without Spotify
 
 - [ ] **A1. Alembic migration: multi-provider `users` table.** *(M)*
-  **How:** One migration on the current head (`b8c9d0e1f2a3`):
+  **How:** One migration on the current head (`45f91add221e`, the squashed baseline —
+  the old chain incl. `b8c9d0e1f2a3` was collapsed in gameplan 1.2):
   - `spotify_id` → **nullable** (keep `unique`; Postgres allows multiple NULLs).
   - Add `google_id TEXT UNIQUE NULL` (Google's stable `sub` claim).
   - Add `password_hash TEXT NULL`.
