@@ -284,7 +284,18 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Spotify rejects any redirect URI not pre-registered — OAuth will fail on first
   login otherwise. Easy to forget; blocks the entire core flow.
 
-- [ ] **1.7 Keep dev TLS material out of the build context.**
+- [x] **1.7 Keep dev TLS material out of the build context.**
+  > **Code landed 2026-07-22.** Added `*.pem` to
+  > [frontend/.dockerignore](../frontend/.dockerignore) (it previously listed only
+  > node_modules/.next/.env*.local). The correction below holds: the mkcert pems were
+  > never committed (root .gitignore covers them; `git log --all` empty), so no history
+  > purge was needed. But the .dockerignore rule was still outstanding: the builder
+  > stage's `COPY . .` ([frontend/Dockerfile](../frontend/Dockerfile) line 5) pulled the
+  > working-tree pems into the build context / builder layer / cache. Verified with a
+  > throwaway `busybox` + `COPY . /ctx` build against the real context: pems now absent
+  > (OK_NO_PEM_IN_CONTEXT). The multi-stage runtime image was already clean; this closes
+  > the builder side. Prod de-reference is moot (no docker-compose.prod.yaml yet; Phase
+  > 3.5 mounts Let's Encrypt certs, not mkcert pems).
   **How:** Add `*.pem` to [frontend/.dockerignore](../frontend/.dockerignore) (it lists
   only `node_modules`/`.next`/`.env*.local` today) and don't reference the mkcert files in
   prod config. *(Corrected: the pems were never committed — root `.gitignore` covers
