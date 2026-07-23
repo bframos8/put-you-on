@@ -223,7 +223,18 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** You already pay for the dependency. Production without error tracking means you
   learn about failures from users, not dashboards.
 
-- [ ] **1.4 Set the production process model for uvicorn.**
+- [x] **1.4 Set the production process model for uvicorn.**
+  > **Code landed 2026-07-22.** Backend [Dockerfile](../backend/Dockerfile) CMD now runs
+  > uvicorn with `--proxy-headers --forwarded-allow-ips=*` (1 worker, uvicorn's default).
+  > Baked into the image (not a compose override) so the Phase 2 image is production-shaped
+  > and dev, which also runs behind nginx, matches prod. `=*` is safe: port 8000 is never
+  > published, only nginx on the internal network reaches it. Verified by booting the real
+  > app with the flags: a request with `X-Forwarded-For: 203.0.113.7` is logged by uvicorn
+  > with client `203.0.113.7` (vs `127.0.0.1` without it), so `get_remote_address`/`slowapi`
+  > now key the unauthenticated login routes ([auth.py](../backend/app/api/v1/auth.py)
+  > `20/minute` + `10/minute`) on the real client IP instead of one site-wide nginx bucket.
+  > Worker scaling stays deferred to metrics (6.1); the test suite is unaffected (change is
+  > in the container launch command, not importable code).
   **How:** Run uvicorn with `--proxy-headers --forwarded-allow-ips="*"` (it sits behind
   nginx). For multi-core use, add workers — but **measure first**: each worker is a **full
   copy** of the app, and the P1/P2 double model load means that copy carries both model
