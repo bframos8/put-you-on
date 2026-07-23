@@ -304,7 +304,23 @@ is the last thing you wire because it automates a process you've already proven 
   the builder stage/cache too.)*
   **Why:** Private keys don't belong in any image layer, including intermediate ones.
 
-- [ ] **1.8 (Recommended, from your audit) Replace `print()` with `logging`.**
+- [x] **1.8 (Recommended, from your audit) Replace `print()` with `logging`.**
+  > **Code landed 2026-07-22.** Migrated the 7 real `print()` calls in `backend/app`
+  > (main.py DAILY_LIMIT_BYPASS warning; auth.py callback failure; 5 in
+  > spotify_ingest_service.py) to per-module `logging.getLogger(__name__)` at
+  > level-appropriate calls (info/warning/error, `%`-style lazy args). Added
+  > `logging.basicConfig` at startup in [main.py](../backend/app/main.py) with an
+  > env-driven `LOG_LEVEL` (default INFO; documented in
+  > [.env.example](../backend/.env.example)) and a timestamp/level/name format, so
+  > output now has levels/timestamps and can be routed or silenced. `auth.py`
+  > deliberately logs only `type(e).__name__` (no traceback) to preserve the S2
+  > no-sensitive-data guard on the OAuth callback; since that log moved stdout->stderr,
+  > migrated `test_failed_callback_does_not_log_code_or_traceback` from `capsys` to
+  > `caplog` (plus a positive assertion, so the guard stays live). The 2 remaining
+  > `print(` occurrences (crypto.py, session.py) are string literals in error messages
+  > (key-gen hints), not calls. `data_pipeline`'s ~69 prints stay deferred with the rest
+  > of the pipeline. All 146 backend tests pass; log format + LOG_LEVEL gating verified
+  > at runtime.
   **How:** `logger = logging.getLogger(__name__)` per module; `logger.info/warning/exception`.
   This is **H3** in [housekeeping-audit.md](housekeeping-audit.md).
   **Why:** Production needs log levels, timestamps, and the ability to route/silence output.
