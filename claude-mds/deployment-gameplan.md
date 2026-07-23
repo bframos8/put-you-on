@@ -203,7 +203,19 @@ is the last thing you wire because it automates a process you've already proven 
   **Risk:** Medium-high — verify the baseline and the stamp carefully against RDS before
   cutting over. This is the highest-risk correctness item in the plan.
 
-- [ ] **1.3 Initialize Sentry.**
+- [x] **1.3 Initialize Sentry.**
+  > **Code landed 2026-07-22.** `sentry_sdk.init` added to
+  > [main.py](../backend/app/main.py), guarded by `SENTRY_DSN` presence (no-op in
+  > local dev / tests — verified both ways; all 146 backend tests pass). Init runs
+  > **before app-module imports** so import-time/startup failures are captured too.
+  > Made **env-driven** rather than hardcoded: `SENTRY_ENVIRONMENT` (default
+  > `"production"`) and `SENTRY_TRACES_SAMPLE_RATE` (default **`0.0` — errors only**)
+  > join `SENTRY_DSN` in [.env.example](../backend/.env.example), materialized from
+  > SSM at deploy (Phase 5). Performance tracing defaults **off** so the RED/latency
+  > story stays owned by the Grafana stack
+  > ([observability-plan.md](observability-plan.md)) with zero overlap; raise the
+  > rate later to debug a slow endpoint. **Remaining (ops, not code):** create the
+  > Sentry project and add the real `SENTRY_DSN` under `/putyouon/prod/` (Phase 5).
   **How:** In [main.py](../backend/app/main.py), `import sentry_sdk` and
   `sentry_sdk.init(dsn=os.getenv("SENTRY_DSN"), traces_sample_rate=..., environment="prod")`
   guarded by the env var being present (no-op locally). Add `SENTRY_DSN` to

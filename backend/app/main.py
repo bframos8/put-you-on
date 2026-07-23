@@ -4,8 +4,21 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+import sentry_sdk
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env-backend")
+
+# Initialize Sentry before importing app modules so import-time and startup
+# failures are captured. No-op when SENTRY_DSN is unset (local dev / tests).
+# Errors are always reported; performance tracing defaults off, since aggregate
+# latency/throughput is owned by the Grafana metrics stack (observability-plan.md).
+_sentry_dsn = os.getenv("SENTRY_DSN")
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+    )
 
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import MutableHeaders

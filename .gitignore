@@ -88,6 +88,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the committed contract template (this negation must follow .env*,
+# whose broad match would otherwise re-ignore it and defeat the opt-in above).
+!.env.example
 
 # vercel
 .vercel
