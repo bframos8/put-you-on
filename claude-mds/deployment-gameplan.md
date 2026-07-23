@@ -274,7 +274,11 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** These currently default to `localhost`/`127.0.0.1`. OAuth, CORS, and HSTS all
   break or become insecure if they don't match the served origin.
 
-- [ ] **1.6 Register the production OAuth callback in the Spotify dashboard.**
+- [x] **1.6 Register the production OAuth callback in the Spotify dashboard.**
+  > **Done manually 2026-07-22.** `https://putyouon.app/api/v1/auth/spotify/callback`
+  > added to the Spotify app's Redirect URIs (ops step, no code). Matches the
+  > `SPOTIFY_REDIRECT_URI` prod value Phase 5 materializes from SSM (and the corrected
+  > `/api/v1` fallback landed in 1.5).
   **How:** Add `https://putyouon.app/api/v1/auth/spotify/callback` to your Spotify app's
   Redirect URIs.
   **Why:** Spotify rejects any redirect URI not pre-registered — OAuth will fail on first
