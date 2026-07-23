@@ -249,7 +249,22 @@ is the last thing you wire because it automates a process you've already proven 
   *not* affected: it's a static `ENABLE_HSTS` toggle, scheme-independent.) Worker count is
   a memory/throughput tradeoff specific to this TF-heavy service.
 
-- [ ] **1.5 Point all environment config at the real domain.**
+- [x] **1.5 Point all environment config at the real domain.**
+  > **Code landed 2026-07-22.** The domain *values* (`ENABLE_HSTS=true` and the three
+  > `https://putyouon.app` origins/redirect) are production env set in SSM at deploy
+  > (Phase 5), not repo changes; [.env.example](../backend/.env.example) keeps its
+  > localhost dev defaults. The Phase-1 repo deliverable: documented the previously
+  > undocumented `DAILY_LIMIT_BYPASS` (dev-only escape hatch; blank = limit enforced;
+  > must stay unset in prod, where the app warns at startup if enabled). Two adjacent
+  > fixes folded in: (a) corrected the `SPOTIFY_REDIRECT_URI` code fallback in
+  > [spotify_auth_service.py](../backend/app/services/spotify_auth_service.py) from
+  > `.../auth/spotify/callback` to `.../api/v1/auth/spotify/callback` (the real route
+  > per main.py+auth.py; the old default 404'd, the silent-localhost-fallback trap 5.1
+  > warns about); (b) added a committed
+  > [.env-postgres.example](../backend/.env-postgres.example) template for the backend's
+  > second env_file (`POSTGRES_*`), broadening the `.gitignore` negation to
+  > `!.env*.example` (verified the real `.env-backend`/`.env-postgres` secret files stay
+  > ignored). All 146 backend tests pass.
   **How:** In production env (Phase 5): `ENABLE_HSTS=true`,
   `CORS_ALLOWED_ORIGINS=https://putyouon.app`, `FRONTEND_URL=https://putyouon.app`,
   `SPOTIFY_REDIRECT_URI=https://putyouon.app/api/v1/auth/spotify/callback`. Ensure
