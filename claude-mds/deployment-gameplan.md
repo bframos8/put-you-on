@@ -203,7 +203,19 @@ is the last thing you wire because it automates a process you've already proven 
   **Risk:** Medium-high — verify the baseline and the stamp carefully against RDS before
   cutting over. This is the highest-risk correctness item in the plan.
 
-- [ ] **1.3 Initialize Sentry.**
+- [x] **1.3 Initialize Sentry.**
+  > **Code landed 2026-07-22.** `sentry_sdk.init` added to
+  > [main.py](../backend/app/main.py), guarded by `SENTRY_DSN` presence (no-op in
+  > local dev / tests — verified both ways; all 146 backend tests pass). Init runs
+  > **before app-module imports** so import-time/startup failures are captured too.
+  > Made **env-driven** rather than hardcoded: `SENTRY_ENVIRONMENT` (default
+  > `"production"`) and `SENTRY_TRACES_SAMPLE_RATE` (default **`0.0` — errors only**)
+  > join `SENTRY_DSN` in [.env.example](../backend/.env.example), materialized from
+  > SSM at deploy (Phase 5). Performance tracing defaults **off** so the RED/latency
+  > story stays owned by the Grafana stack
+  > ([observability-plan.md](observability-plan.md)) with zero overlap; raise the
+  > rate later to debug a slow endpoint. **Remaining (ops, not code):** create the
+  > Sentry project and add the real `SENTRY_DSN` under `/putyouon/prod/` (Phase 5).
   **How:** In [main.py](../backend/app/main.py), `import sentry_sdk` and
   `sentry_sdk.init(dsn=os.getenv("SENTRY_DSN"), traces_sample_rate=..., environment="prod")`
   guarded by the env var being present (no-op locally). Add `SENTRY_DSN` to
@@ -211,7 +223,18 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** You already pay for the dependency. Production without error tracking means you
   learn about failures from users, not dashboards.
 
-- [ ] **1.4 Set the production process model for uvicorn.**
+- [x] **1.4 Set the production process model for uvicorn.**
+  > **Code landed 2026-07-22.** Backend [Dockerfile](../backend/Dockerfile) CMD now runs
+  > uvicorn with `--proxy-headers --forwarded-allow-ips=*` (1 worker, uvicorn's default).
+  > Baked into the image (not a compose override) so the Phase 2 image is production-shaped
+  > and dev, which also runs behind nginx, matches prod. `=*` is safe: port 8000 is never
+  > published, only nginx on the internal network reaches it. Verified by booting the real
+  > app with the flags: a request with `X-Forwarded-For: 203.0.113.7` is logged by uvicorn
+  > with client `203.0.113.7` (vs `127.0.0.1` without it), so `get_remote_address`/`slowapi`
+  > now key the unauthenticated login routes ([auth.py](../backend/app/api/v1/auth.py)
+  > `20/minute` + `10/minute`) on the real client IP instead of one site-wide nginx bucket.
+  > Worker scaling stays deferred to metrics (6.1); the test suite is unaffected (change is
+  > in the container launch command, not importable code).
   **How:** Run uvicorn with `--proxy-headers --forwarded-allow-ips="*"` (it sits behind
   nginx). For multi-core use, add workers — but **measure first**: each worker is a **full
   copy** of the app, and the P1/P2 double model load means that copy carries both model
@@ -226,7 +249,22 @@ is the last thing you wire because it automates a process you've already proven 
   *not* affected: it's a static `ENABLE_HSTS` toggle, scheme-independent.) Worker count is
   a memory/throughput tradeoff specific to this TF-heavy service.
 
-- [ ] **1.5 Point all environment config at the real domain.**
+- [x] **1.5 Point all environment config at the real domain.**
+  > **Code landed 2026-07-22.** The domain *values* (`ENABLE_HSTS=true` and the three
+  > `https://putyouon.app` origins/redirect) are production env set in SSM at deploy
+  > (Phase 5), not repo changes; [.env.example](../backend/.env.example) keeps its
+  > localhost dev defaults. The Phase-1 repo deliverable: documented the previously
+  > undocumented `DAILY_LIMIT_BYPASS` (dev-only escape hatch; blank = limit enforced;
+  > must stay unset in prod, where the app warns at startup if enabled). Two adjacent
+  > fixes folded in: (a) corrected the `SPOTIFY_REDIRECT_URI` code fallback in
+  > [spotify_auth_service.py](../backend/app/services/spotify_auth_service.py) from
+  > `.../auth/spotify/callback` to `.../api/v1/auth/spotify/callback` (the real route
+  > per main.py+auth.py; the old default 404'd, the silent-localhost-fallback trap 5.1
+  > warns about); (b) added a committed
+  > [.env-postgres.example](../backend/.env-postgres.example) template for the backend's
+  > second env_file (`POSTGRES_*`), broadening the `.gitignore` negation to
+  > `!.env*.example` (verified the real `.env-backend`/`.env-postgres` secret files stay
+  > ignored). All 146 backend tests pass.
   **How:** In production env (Phase 5): `ENABLE_HSTS=true`,
   `CORS_ALLOWED_ORIGINS=https://putyouon.app`, `FRONTEND_URL=https://putyouon.app`,
   `SPOTIFY_REDIRECT_URI=https://putyouon.app/api/v1/auth/spotify/callback`. Ensure
@@ -236,13 +274,28 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** These currently default to `localhost`/`127.0.0.1`. OAuth, CORS, and HSTS all
   break or become insecure if they don't match the served origin.
 
-- [ ] **1.6 Register the production OAuth callback in the Spotify dashboard.**
+- [x] **1.6 Register the production OAuth callback in the Spotify dashboard.**
+  > **Done manually 2026-07-22.** `https://putyouon.app/api/v1/auth/spotify/callback`
+  > added to the Spotify app's Redirect URIs (ops step, no code). Matches the
+  > `SPOTIFY_REDIRECT_URI` prod value Phase 5 materializes from SSM (and the corrected
+  > `/api/v1` fallback landed in 1.5).
   **How:** Add `https://putyouon.app/api/v1/auth/spotify/callback` to your Spotify app's
   Redirect URIs.
   **Why:** Spotify rejects any redirect URI not pre-registered — OAuth will fail on first
   login otherwise. Easy to forget; blocks the entire core flow.
 
-- [ ] **1.7 Keep dev TLS material out of the build context.**
+- [x] **1.7 Keep dev TLS material out of the build context.**
+  > **Code landed 2026-07-22.** Added `*.pem` to
+  > [frontend/.dockerignore](../frontend/.dockerignore) (it previously listed only
+  > node_modules/.next/.env*.local). The correction below holds: the mkcert pems were
+  > never committed (root .gitignore covers them; `git log --all` empty), so no history
+  > purge was needed. But the .dockerignore rule was still outstanding: the builder
+  > stage's `COPY . .` ([frontend/Dockerfile](../frontend/Dockerfile) line 5) pulled the
+  > working-tree pems into the build context / builder layer / cache. Verified with a
+  > throwaway `busybox` + `COPY . /ctx` build against the real context: pems now absent
+  > (OK_NO_PEM_IN_CONTEXT). The multi-stage runtime image was already clean; this closes
+  > the builder side. Prod de-reference is moot (no docker-compose.prod.yaml yet; Phase
+  > 3.5 mounts Let's Encrypt certs, not mkcert pems).
   **How:** Add `*.pem` to [frontend/.dockerignore](../frontend/.dockerignore) (it lists
   only `node_modules`/`.next`/`.env*.local` today) and don't reference the mkcert files in
   prod config. *(Corrected: the pems were never committed — root `.gitignore` covers
@@ -251,7 +304,23 @@ is the last thing you wire because it automates a process you've already proven 
   the builder stage/cache too.)*
   **Why:** Private keys don't belong in any image layer, including intermediate ones.
 
-- [ ] **1.8 (Recommended, from your audit) Replace `print()` with `logging`.**
+- [x] **1.8 (Recommended, from your audit) Replace `print()` with `logging`.**
+  > **Code landed 2026-07-22.** Migrated the 7 real `print()` calls in `backend/app`
+  > (main.py DAILY_LIMIT_BYPASS warning; auth.py callback failure; 5 in
+  > spotify_ingest_service.py) to per-module `logging.getLogger(__name__)` at
+  > level-appropriate calls (info/warning/error, `%`-style lazy args). Added
+  > `logging.basicConfig` at startup in [main.py](../backend/app/main.py) with an
+  > env-driven `LOG_LEVEL` (default INFO; documented in
+  > [.env.example](../backend/.env.example)) and a timestamp/level/name format, so
+  > output now has levels/timestamps and can be routed or silenced. `auth.py`
+  > deliberately logs only `type(e).__name__` (no traceback) to preserve the S2
+  > no-sensitive-data guard on the OAuth callback; since that log moved stdout->stderr,
+  > migrated `test_failed_callback_does_not_log_code_or_traceback` from `capsys` to
+  > `caplog` (plus a positive assertion, so the guard stays live). The 2 remaining
+  > `print(` occurrences (crypto.py, session.py) are string literals in error messages
+  > (key-gen hints), not calls. `data_pipeline`'s ~69 prints stay deferred with the rest
+  > of the pipeline. All 146 backend tests pass; log format + LOG_LEVEL gating verified
+  > at runtime.
   **How:** `logger = logging.getLogger(__name__)` per module; `logger.info/warning/exception`.
   This is **H3** in [housekeeping-audit.md](housekeeping-audit.md).
   **Why:** Production needs log levels, timestamps, and the ability to route/silence output.

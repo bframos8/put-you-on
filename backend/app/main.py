@@ -1,11 +1,31 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+import sentry_sdk
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env-backend")
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Initialize Sentry before importing app modules so import-time and startup
+# failures are captured. No-op when SENTRY_DSN is unset (local dev / tests).
+# Errors are always reported; performance tracing defaults off, since aggregate
+# latency/throughput is owned by the Grafana metrics stack (observability-plan.md).
+_sentry_dsn = os.getenv("SENTRY_DSN")
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+    )
 
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import MutableHeaders
@@ -27,9 +47,8 @@ async def lifespan(app: FastAPI):
     app.state.oauth_states = {}
     app.state.processing_users = set()
     if DAILY_LIMIT_BYPASS:
-        print(
-            "WARNING: DAILY_LIMIT_BYPASS=true — daily dispatch limit is DISABLED. Do not enable in production.",
-            flush=True,
+        logger.warning(
+            "DAILY_LIMIT_BYPASS=true: daily dispatch limit is DISABLED. Do not enable in production."
         )
     yield
     engine.dispose()

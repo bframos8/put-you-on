@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -10,6 +11,8 @@ from ...services.spotify_auth_service import SpotifyAuthService
 from ...core.session import create_session
 from ...core.dependencies import get_current_user
 from ...core.limiter import limiter, session_key
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth")
 auth_service = SpotifyAuthService()
@@ -58,7 +61,7 @@ async def spotify_callback(request: Request, code: str = None, state: str = None
         profile = await auth_service.get_spotify_profile(token_data["access_token"])
         user = await auth_service.upsert_user(db, token_data, profile)
     except Exception as e:
-        print(f"ERROR Spotify callback failed: {type(e).__name__}", flush=True)
+        logger.error("Spotify callback failed: %s", type(e).__name__)
         return RedirectResponse(url=f"{frontend_url}?error=auth_failed")
 
     response = RedirectResponse(url=frontend_url)

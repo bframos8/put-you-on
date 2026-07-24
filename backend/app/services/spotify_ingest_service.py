@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import subprocess
@@ -17,6 +18,8 @@ from sqlalchemy.orm import Session, selectinload
 from ..core.daily import today_pst
 from ..db.models import Album, Song, User, UserRecommendation, UserTopSong
 from .audio_genre_classifier import AudioGenreClassifier
+
+logger = logging.getLogger(__name__)
 
 essentia.log.warningActive = False
 
@@ -171,14 +174,14 @@ class SpotifyIngestService:
                 db.commit()
                 success = True
             else:
-                print(f"Processing: {top_song.track_title} | {top_song.spotify_url}")
+                logger.info("Processing: %s | %s", top_song.track_title, top_song.spotify_url)
                 try:
                     audio_path = self._download(top_song.spotify_url)
                 except Exception as e:
-                    print(f"Skipping {top_song.track_title}: download failed — {e}")
+                    logger.warning("Skipping %s: download failed: %s", top_song.track_title, e)
                     continue
 
-                print(f"Downloaded to: {audio_path}")
+                logger.info("Downloaded to: %s", audio_path)
                 try:
                     audio = self._load_audio(audio_path)
                     genre = self.genre_classifier.classify(audio)
@@ -205,7 +208,7 @@ class SpotifyIngestService:
                     success = True
                 except Exception as e:
                     db.rollback()
-                    print(f"Skipping {top_song.track_title}: processing failed — {e}")
+                    logger.warning("Skipping %s: processing failed: %s", top_song.track_title, e)
                 finally:
                     self._cleanup(audio_path)
 
@@ -222,7 +225,7 @@ class SpotifyIngestService:
             return True
         except Exception as e:
             db.rollback()
-            print(f"on_first_success callback failed; will retry on next song: {e}")
+            logger.warning("on_first_success callback failed; will retry on next song: %s", e)
             return False
 
     def snapshot_is_stale(self, user: User, db: Session) -> bool:

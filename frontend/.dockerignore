@@ -1,3 +1,7 @@
 node_modules
 .next
 .env*.local
+
+# Dev-only mkcert TLS material (localhost+1*.pem): never belongs in the build
+# context or any image layer, including the builder stage COPY . . (gameplan 1.7).
+*.pem

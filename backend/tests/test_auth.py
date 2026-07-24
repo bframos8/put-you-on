@@ -11,6 +11,7 @@ We cannot drive a real Spotify browser flow in CI, so:
     runs its actual logic against the mocked DB.
 """
 
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -341,14 +342,14 @@ class TestNoSensitiveLogging:
         assert valid_session not in out
         assert "DEBUG get_current_user cookies" not in out
 
-    def test_failed_callback_does_not_log_code_or_traceback(self, client, capsys):
+    def test_failed_callback_does_not_log_code_or_traceback(self, client, caplog):
         _seed_state(client, "leak_state")
         secret_code = "super_secret_oauth_code"
         exc_detail = "token endpoint blew up with secret detail"
         with patch(
             "app.api.v1.auth.auth_service.exchange_code",
             new=AsyncMock(side_effect=Exception(exc_detail)),
-        ):
+        ), caplog.at_level(logging.ERROR):
             resp = client.get(
                 f"{PREFIX}/spotify/callback?code={secret_code}&state=leak_state",
                 follow_redirects=False,
@@ -356,10 +357,13 @@ class TestNoSensitiveLogging:
 
         assert "auth_failed" in resp.headers["location"]
 
-        out = capsys.readouterr().out
-        assert secret_code not in out
-        assert exc_detail not in out
-        assert "Traceback (most recent call last)" not in out
+        # The callback now logs via `logging` (stderr), not print(stdout); assert on
+        # captured log records so this S2 guard still covers the real destination.
+        log_text = caplog.text
+        assert "Spotify callback failed: Exception" in log_text  # it did log (type name only)
+        assert secret_code not in log_text
+        assert exc_detail not in log_text
+        assert "Traceback (most recent call last)" not in log_text
 
 
 # ══════════════════════════════════════════════════════════════════════════════

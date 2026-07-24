@@ -16,7 +16,7 @@ load_dotenv(dotenv_path=env_path)
 
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:8000/auth/spotify/callback")
+SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:8000/api/v1/auth/spotify/callback")
 SPOTIFY_HTTP_TIMEOUT = float(os.getenv("SPOTIFY_HTTP_TIMEOUT", "10.0"))
 SPOTIFY_SCOPES = "user-read-email user-read-private user-top-read"
 SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize"
