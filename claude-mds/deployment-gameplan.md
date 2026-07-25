@@ -353,7 +353,18 @@ is the last thing you wire because it automates a process you've already proven 
   ignore file, baking tests/cache/agents into the image — larger images, slower pulls, more
   attack surface. (The frontend already has a [.dockerignore](../frontend/.dockerignore).)
 
-- [ ] **2.2 Run both images as a non-root user.**
+- [x] **2.2 Run both images as a non-root user.**
+  > **Code landed 2026-07-25.** Backend [Dockerfile](../backend/Dockerfile): `useradd
+  > --create-home app` + `USER app` before CMD. **Non-obvious:** the ingest path writes
+  > downloaded audio under `app/services/downloads`
+  > ([spotify_ingest_service.py:27-33](../backend/app/services/spotify_ingest_service.py#L27-L33)
+  > — `mkdir` + `mkdtemp`), so that one dir is pre-created and `chown`ed to `app`; the rest
+  > of `/app` stays root-owned and read-only (a compromised process can't rewrite app code).
+  > Frontend [Dockerfile](../frontend/Dockerfile): `USER node` (the image's built-in uid-1000
+  > user) in the runtime stage — the standalone server only reads the root-owned,
+  > world-readable files and writes nothing. Verified by building both and running: backend
+  > `whoami`=`app`/uid 1000, downloads dir writable, `/app/app` code write **denied**;
+  > frontend `whoami`=`node`/uid 1000, `server.js` present.
   **How:** Backend: add a `useradd app` and `USER app` before `CMD`. Frontend: switch to the
   built-in `node` user in the runtime stage.
   **Why:** Defense in depth — a container escape or RCE shouldn't land as root. Standard

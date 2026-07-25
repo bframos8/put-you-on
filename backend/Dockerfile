@@ -4,6 +4,13 @@ WORKDIR /app
 COPY backend_requirements.txt .
 RUN pip install --no-cache-dir -r backend_requirements.txt
 COPY . .
+# Run as an unprivileged user — a container escape or RCE shouldn't land as root.
+# spotdl downloads audio under app/services/downloads (created at runtime), so that
+# dir alone must be writable by `app`; the rest of /app stays root-owned/read-only.
+RUN useradd --create-home app \
+    && mkdir -p /app/app/services/downloads \
+    && chown app:app /app/app/services/downloads
+USER app
 # Sits behind the nginx TLS proxy: honor X-Forwarded-* so the app sees the real
 # client IP (slowapi rate-limits the unauthenticated login routes by IP) and the
 # real scheme. --forwarded-allow-ips=* is safe because port 8000 is never
