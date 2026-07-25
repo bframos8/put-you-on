@@ -370,7 +370,21 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Defense in depth — a container escape or RCE shouldn't land as root. Standard
   baseline for production images.
 
-- [ ] **2.3 Add a `HEALTHCHECK` to each image.**
+- [x] **2.3 Add a `HEALTHCHECK` to each image.**
+  > **Code landed 2026-07-25.** Both base images lack `curl`, so instead of adding a
+  > package the probes reuse the runtime already present: backend
+  > [Dockerfile](../backend/Dockerfile) runs `python -c` (urllib) against the existing
+  > `/health` liveness endpoint ([health.py](../backend/app/api/v1/health.py), shipped in
+  > 1.1); frontend [Dockerfile](../frontend/Dockerfile) runs `node -e` (http) against `/`.
+  > Timing: `--interval=30s --timeout=5s --retries=3`, with `--start-period=40s` on the
+  > backend (covers the TF model load) and `10s` on the frontend. **Found + fixed a real
+  > prod bug while verifying:** Next's standalone `server.js` binds to
+  > `process.env.HOSTNAME`, which Docker injects as the container id, so it listened only
+  > on the container's own IP and `localhost`/`127.0.0.1` got `ECONNREFUSED` — not just a
+  > failed probe but a fragile bind. Added `ENV HOSTNAME=0.0.0.0 PORT=3000` so it accepts
+  > both the loopback probe and nginx's proxy to the container IP. Verified end-to-end:
+  > built + booted both containers and polled `docker inspect` health — both flip to
+  > `healthy` (probe `exit=0`), backend `/health` logs `200`.
   **How:** Backend: `HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1`.
   Frontend: hit `http://localhost:3000/`. (Install `curl` or use a tiny Python/Node check.)
   **Why:** Lets Docker/Compose report container health, which the deploy gate and
