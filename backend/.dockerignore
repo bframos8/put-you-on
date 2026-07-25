@@ -1,0 +1,31 @@
+# The backend Dockerfile does `COPY . .` (no ignore file today), baking tests,
+# caches, and agent notes into the image. Exclude everything the runtime doesn't
+# need — smaller images, faster pulls, less attack surface (gameplan 2.1).
+#
+# CI mounts the test files back in from the checkout (gameplan 8.1), so dropping
+# them here doesn't stop the image from being tested.
+
+# Test suite + its tooling (pytest lives in test-requirements.txt, not the image)
+tests/
+pytest.ini
+test-requirements.txt
+.pytest_cache/
+
+# Agent working notes — never a runtime dependency
+agents/
+
+# Python bytecode / caches (**/ so nested dirs like app/__pycache__ match too —
+# dockerignore patterns are rooted at the context, unlike .gitignore)
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Env files (secrets are materialized from SSM at deploy, gameplan 5.2; the
+# .example templates are dev docs, not needed in the image)
+.env*
+
+# Local certs / scratch material — private keys don't belong in any image layer
+**/*.pem
+
+# Keep (do NOT ignore): app/ incl. app/models/*.pb (runtime TF model), alembic/,
+# alembic.ini, backend_requirements.txt — all load-bearing at runtime.

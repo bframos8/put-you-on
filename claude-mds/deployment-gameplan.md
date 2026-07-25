@@ -331,7 +331,20 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 2 — Harden the Docker images
 
-- [ ] **2.1 Add `backend/.dockerignore`.**
+- [x] **2.1 Add `backend/.dockerignore`.**
+  > **Code landed 2026-07-25.** Added [backend/.dockerignore](../backend/.dockerignore)
+  > (none existed; the backend Dockerfile's bare `COPY . .` was baking everything in).
+  > Excludes `tests/`, `pytest.ini`, `test-requirements.txt`, `.pytest_cache/`, `agents/`,
+  > `__pycache__/`, `*.pyc`/`*.pyo`, `.env*`, and `*.pem`; keeps `app/` (incl.
+  > `app/models/*.pb` runtime TF model), `alembic/`, `alembic.ini`,
+  > `backend_requirements.txt`. **Non-obvious:** dockerignore patterns are rooted at the
+  > build context (unlike `.gitignore`, which matches at any depth), so bare
+  > `__pycache__/`/`*.pyc` left nested caches (`app/__pycache__`, …) in the context — fixed
+  > by prefixing with `**/`. Verified by building a throwaway `busybox` image with
+  > `COPY . /ctx` against the real context (the 1.7 approach): every excluded path absent
+  > (incl. nested pycache dirs + the `.env*.example` templates), every runtime path present
+  > (incl. the `.pb` model + `alembic/env.py`). Dropping the test files is exactly what 8.1
+  > expects — CI mounts them back in.
   **How:** Exclude `tests/`, `pytest.ini`, `test-requirements.txt`, `.pytest_cache/`,
   `agents/`, `__pycache__/`, `*.pyc`, `.env*`, and any local certs/scratch. **Keep**
   `app/` (including `app/models/*.pb` — the runtime TF model), `alembic/`, `alembic.ini`,
