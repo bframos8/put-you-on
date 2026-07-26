@@ -390,7 +390,19 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Lets Docker/Compose report container health, which the deploy gate and
   `depends_on: condition: service_healthy` rely on.
 
-- [ ] **2.4 Pin base images and keep the build lean.**
+- [x] **2.4 Pin base images and keep the build lean.**
+  > **Code landed 2026-07-25.** Pinned `spotdl` → **`spotdl==4.5.2`** in
+  > [backend_requirements.txt](../backend/backend_requirements.txt) (it was the only
+  > unpinned dep; 4.5.2 is what pip was already resolving, so no behavior change — just
+  > reproducibility). Everything else was already in place: `--no-cache-dir` present
+  > ([Dockerfile](../backend/Dockerfile) pip step), `ffmpeg` installed (apt step), bases
+  > kept on their tags. **Deliberately did NOT pin bases by digest:** the tags
+  > `python:3.11-slim-bookworm` / `node:20-alpine` float to patched OS layers each build,
+  > which is what drains the base-image CVE backlog the IDE flags; a digest pin would
+  > freeze us on today's vulnerable layers until manually bumped. Also left `spotdl`'s
+  > `yt-dlp` transitive dep to spotdl's own range rather than hard-pinning it — yt-dlp must
+  > float to track YouTube changes or downloads break. Verified: full rebuild is green,
+  > `spotdl` reports 4.5.2 and imports, `ffmpeg` present in the image.
   **How:** Keep `python:3.11-slim-bookworm` / `node:20-alpine`; consider pinning by digest.
   Pin `spotdl` in [backend_requirements.txt](../backend/backend_requirements.txt) — it's
   bare today, so every build can resolve a different version of the tool driving the whole
