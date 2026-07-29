@@ -1,6 +1,9 @@
 node_modules
 .next
-.env*.local
+# Keep ALL local env files out of the build context. NEXT_PUBLIC_API_URL comes
+# only from the build-arg (gameplan 2.5); a stray local .env.production would
+# otherwise enter the context and be a misleading second source of truth.
+.env*
 
 # Dev-only mkcert TLS material (localhost+1*.pem): never belongs in the build
 # context or any image layer, including the builder stage COPY . . (gameplan 1.7).

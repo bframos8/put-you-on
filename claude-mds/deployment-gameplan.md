@@ -412,7 +412,21 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Reproducible builds and a smaller runtime surface. ffmpeg is a real runtime
   dependency of the audio path — don't drop it.
 
-- [ ] **2.5 Confirm the frontend build bakes the right API URL.**
+- [x] **2.5 Confirm the frontend build bakes the right API URL.**
+  > **Confirmed + hardened 2026-07-28.** Verified empirically: building the frontend with
+  > `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app` inlines `putyouon.app` into the
+  > client bundle (4 chunks) with **zero** `127.0.0.1` — proving the Dockerfile `ENV` (a
+  > real env var) wins over any `.env` file per Next's precedence. **Two footguns found +
+  > closed:** (1) a missing build-arg used to bake an *empty* URL silently (all API calls
+  > become relative to the frontend's own origin, no build error) — added a builder-stage
+  > guard `RUN test -n "$NEXT_PUBLIC_API_URL" || exit 1` before `npm run build`, so a
+  > dropped arg now **fails the build loudly** (verified: no-arg build errors with the
+  > guard message). (2) A stray local `.env.production` (`127.0.0.1`) entered the build
+  > context and looked authoritative though it was shadowed — broadened
+  > [frontend/.dockerignore](../frontend/.dockerignore) `.env*.local` → `.env*` so no local
+  > env file can reach the context (build-arg is the sole source). Note: `.env.production`/
+  > `.env.local` are **gitignored/untracked** (local-only, never in CI), so the `.dockerignore`
+  > rule is the committable neutralization; the files themselves need no repo change.
   **How:** The image must be built with `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`
   (wired in CI, Phase 8). Today compose passes `https://127.0.0.1`
   ([docker-compose.yaml:20](../docker-compose.yaml#L20)).

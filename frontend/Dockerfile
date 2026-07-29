@@ -5,7 +5,12 @@ RUN npm ci
 COPY . .
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-RUN npm run build
+# NEXT_PUBLIC_* is inlined into the client bundle at BUILD time — a wrong/empty value
+# can't be corrected at runtime (gameplan 2.5). Fail loudly if the deploy build-arg is
+# missing rather than shipping an image whose API calls silently hit the frontend's own
+# origin. CI passes https://putyouon.app (Phase 8.2).
+RUN test -n "$NEXT_PUBLIC_API_URL" || (echo 'ERROR: NEXT_PUBLIC_API_URL build-arg is required (gameplan 2.5)' >&2; exit 1) \
+    && npm run build
 
 FROM node:20-alpine
 WORKDIR /app
