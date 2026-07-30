@@ -331,7 +331,20 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 2 — Harden the Docker images
 
-- [ ] **2.1 Add `backend/.dockerignore`.**
+- [x] **2.1 Add `backend/.dockerignore`.**
+  > **Code landed 2026-07-25.** Added [backend/.dockerignore](../backend/.dockerignore)
+  > (none existed; the backend Dockerfile's bare `COPY . .` was baking everything in).
+  > Excludes `tests/`, `pytest.ini`, `test-requirements.txt`, `.pytest_cache/`, `agents/`,
+  > `__pycache__/`, `*.pyc`/`*.pyo`, `.env*`, and `*.pem`; keeps `app/` (incl.
+  > `app/models/*.pb` runtime TF model), `alembic/`, `alembic.ini`,
+  > `backend_requirements.txt`. **Non-obvious:** dockerignore patterns are rooted at the
+  > build context (unlike `.gitignore`, which matches at any depth), so bare
+  > `__pycache__/`/`*.pyc` left nested caches (`app/__pycache__`, …) in the context — fixed
+  > by prefixing with `**/`. Verified by building a throwaway `busybox` image with
+  > `COPY . /ctx` against the real context (the 1.7 approach): every excluded path absent
+  > (incl. nested pycache dirs + the `.env*.example` templates), every runtime path present
+  > (incl. the `.pb` model + `alembic/env.py`). Dropping the test files is exactly what 8.1
+  > expects — CI mounts them back in.
   **How:** Exclude `tests/`, `pytest.ini`, `test-requirements.txt`, `.pytest_cache/`,
   `agents/`, `__pycache__/`, `*.pyc`, `.env*`, and any local certs/scratch. **Keep**
   `app/` (including `app/models/*.pb` — the runtime TF model), `alembic/`, `alembic.ini`,
@@ -340,19 +353,56 @@ is the last thing you wire because it automates a process you've already proven 
   ignore file, baking tests/cache/agents into the image — larger images, slower pulls, more
   attack surface. (The frontend already has a [.dockerignore](../frontend/.dockerignore).)
 
-- [ ] **2.2 Run both images as a non-root user.**
+- [x] **2.2 Run both images as a non-root user.**
+  > **Code landed 2026-07-25.** Backend [Dockerfile](../backend/Dockerfile): `useradd
+  > --create-home app` + `USER app` before CMD. **Non-obvious:** the ingest path writes
+  > downloaded audio under `app/services/downloads`
+  > ([spotify_ingest_service.py:27-33](../backend/app/services/spotify_ingest_service.py#L27-L33)
+  > — `mkdir` + `mkdtemp`), so that one dir is pre-created and `chown`ed to `app`; the rest
+  > of `/app` stays root-owned and read-only (a compromised process can't rewrite app code).
+  > Frontend [Dockerfile](../frontend/Dockerfile): `USER node` (the image's built-in uid-1000
+  > user) in the runtime stage — the standalone server only reads the root-owned,
+  > world-readable files and writes nothing. Verified by building both and running: backend
+  > `whoami`=`app`/uid 1000, downloads dir writable, `/app/app` code write **denied**;
+  > frontend `whoami`=`node`/uid 1000, `server.js` present.
   **How:** Backend: add a `useradd app` and `USER app` before `CMD`. Frontend: switch to the
   built-in `node` user in the runtime stage.
   **Why:** Defense in depth — a container escape or RCE shouldn't land as root. Standard
   baseline for production images.
 
-- [ ] **2.3 Add a `HEALTHCHECK` to each image.**
+- [x] **2.3 Add a `HEALTHCHECK` to each image.**
+  > **Code landed 2026-07-25.** Both base images lack `curl`, so instead of adding a
+  > package the probes reuse the runtime already present: backend
+  > [Dockerfile](../backend/Dockerfile) runs `python -c` (urllib) against the existing
+  > `/health` liveness endpoint ([health.py](../backend/app/api/v1/health.py), shipped in
+  > 1.1); frontend [Dockerfile](../frontend/Dockerfile) runs `node -e` (http) against `/`.
+  > Timing: `--interval=30s --timeout=5s --retries=3`, with `--start-period=40s` on the
+  > backend (covers the TF model load) and `10s` on the frontend. **Found + fixed a real
+  > prod bug while verifying:** Next's standalone `server.js` binds to
+  > `process.env.HOSTNAME`, which Docker injects as the container id, so it listened only
+  > on the container's own IP and `localhost`/`127.0.0.1` got `ECONNREFUSED` — not just a
+  > failed probe but a fragile bind. Added `ENV HOSTNAME=0.0.0.0 PORT=3000` so it accepts
+  > both the loopback probe and nginx's proxy to the container IP. Verified end-to-end:
+  > built + booted both containers and polled `docker inspect` health — both flip to
+  > `healthy` (probe `exit=0`), backend `/health` logs `200`.
   **How:** Backend: `HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1`.
   Frontend: hit `http://localhost:3000/`. (Install `curl` or use a tiny Python/Node check.)
   **Why:** Lets Docker/Compose report container health, which the deploy gate and
   `depends_on: condition: service_healthy` rely on.
 
-- [ ] **2.4 Pin base images and keep the build lean.**
+- [x] **2.4 Pin base images and keep the build lean.**
+  > **Code landed 2026-07-25.** Pinned `spotdl` → **`spotdl==4.5.2`** in
+  > [backend_requirements.txt](../backend/backend_requirements.txt) (it was the only
+  > unpinned dep; 4.5.2 is what pip was already resolving, so no behavior change — just
+  > reproducibility). Everything else was already in place: `--no-cache-dir` present
+  > ([Dockerfile](../backend/Dockerfile) pip step), `ffmpeg` installed (apt step), bases
+  > kept on their tags. **Deliberately did NOT pin bases by digest:** the tags
+  > `python:3.11-slim-bookworm` / `node:20-alpine` float to patched OS layers each build,
+  > which is what drains the base-image CVE backlog the IDE flags; a digest pin would
+  > freeze us on today's vulnerable layers until manually bumped. Also left `spotdl`'s
+  > `yt-dlp` transitive dep to spotdl's own range rather than hard-pinning it — yt-dlp must
+  > float to track YouTube changes or downloads break. Verified: full rebuild is green,
+  > `spotdl` reports 4.5.2 and imports, `ffmpeg` present in the image.
   **How:** Keep `python:3.11-slim-bookworm` / `node:20-alpine`; consider pinning by digest.
   Pin `spotdl` in [backend_requirements.txt](../backend/backend_requirements.txt) — it's
   bare today, so every build can resolve a different version of the tool driving the whole
@@ -362,7 +412,21 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Reproducible builds and a smaller runtime surface. ffmpeg is a real runtime
   dependency of the audio path — don't drop it.
 
-- [ ] **2.5 Confirm the frontend build bakes the right API URL.**
+- [x] **2.5 Confirm the frontend build bakes the right API URL.**
+  > **Confirmed + hardened 2026-07-28.** Verified empirically: building the frontend with
+  > `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app` inlines `putyouon.app` into the
+  > client bundle (4 chunks) with **zero** `127.0.0.1` — proving the Dockerfile `ENV` (a
+  > real env var) wins over any `.env` file per Next's precedence. **Two footguns found +
+  > closed:** (1) a missing build-arg used to bake an *empty* URL silently (all API calls
+  > become relative to the frontend's own origin, no build error) — added a builder-stage
+  > guard `RUN test -n "$NEXT_PUBLIC_API_URL" || exit 1` before `npm run build`, so a
+  > dropped arg now **fails the build loudly** (verified: no-arg build errors with the
+  > guard message). (2) A stray local `.env.production` (`127.0.0.1`) entered the build
+  > context and looked authoritative though it was shadowed — broadened
+  > [frontend/.dockerignore](../frontend/.dockerignore) `.env*.local` → `.env*` so no local
+  > env file can reach the context (build-arg is the sole source). Note: `.env.production`/
+  > `.env.local` are **gitignored/untracked** (local-only, never in CI), so the `.dockerignore`
+  > rule is the committable neutralization; the files themselves need no repo change.
   **How:** The image must be built with `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`
   (wired in CI, Phase 8). Today compose passes `https://127.0.0.1`
   ([docker-compose.yaml:20](../docker-compose.yaml#L20)).
