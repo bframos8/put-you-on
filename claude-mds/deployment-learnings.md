@@ -230,3 +230,120 @@ Plan: do this AWS deployment to learn the ecosystem, then migrate to **Hetzner +
   container back to one commit / one PR / one diff — audit trail and rollback lever in
   one. Optional on top: `git tag` + GitHub Releases for human-readable milestones
   (release notes auto-generated from merged PRs).
+
+## 15. Docker image hardening (Gameplan Phase 2)
+
+Concepts worked through while making the two images production-shaped. Per-item landing
+notes live in the gameplan (2.1–2.5); this is the reusable *why*.
+
+- **`.dockerignore` patterns are rooted at the build context, unlike `.gitignore`.** A bare
+  `__pycache__/` or `*.pyc` in `.dockerignore` matches only the **top level** — nested
+  `app/__pycache__` still enters the context. Use a `**/` prefix (`**/__pycache__/`,
+  `**/*.pyc`) to match at any depth. (`.gitignore` matches any depth by default; the two
+  formats look identical but resolve paths differently — an easy silent miss.)
+
+- **`HEALTHCHECK` is a Dockerfile instruction, not a service or an endpoint.** It's a command
+  Docker runs **inside the already-running container** on a schedule; a non-zero exit marks
+  the container unhealthy. That "healthy" stamp is what `depends_on: service_healthy` and the
+  deploy gate read. It hits the app's *existing* `/health` endpoint over `localhost` — nothing
+  new listens.
+  - **No `curl` in `python:*-slim` or `node:*-alpine`.** Rather than add a package (weight +
+    CVE surface), reuse the interpreter already in the image: `python -c` (urllib) on the
+    backend, `node -e` (http) on the frontend. A non-200 or connection error exits non-zero.
+  - **`--start-period` covers slow boots** so startup isn't counted as failing — the backend
+    needs it for the TF-model load (~tens of seconds); the frontend barely any.
+
+- **Next.js standalone binds to `process.env.HOSTNAME` — and Docker injects
+  `HOSTNAME=<container-id>`.** ⚠️ *(bug found while verifying 2.3.)* So `server.js` listened
+  only on the container's own IP, and `localhost`/`127.0.0.1` got `ECONNREFUSED` — breaking
+  the loopback healthcheck and making the bind fragile in general. Fix: `ENV HOSTNAME=0.0.0.0`
+  in the runtime stage, so it accepts both the loopback probe and nginx's proxy to the
+  container IP. A standard-but-easy-to-miss standalone-in-Docker gotcha.
+
+- **`NEXT_PUBLIC_*` is inlined into the client JS bundle at BUILD time**, so it must be a
+  `--build-arg`; a wrong value can't be corrected at runtime (the browser already has it).
+  Several sub-lessons:
+  - **A real env var wins over a `.env` file.** Next follows dotenv precedence — an
+    already-set `process.env.NEXT_PUBLIC_API_URL` (from the Dockerfile `ENV`) is **not**
+    overridden by a committed `.env.production`. Verified by grepping the built bundle: the
+    build-arg value baked in, the `.env.production` value did not.
+  - **A missing build-arg fails silently, not loudly.** ⚠️ *(fragility found while verifying
+    2.5.)* With `ARG` and no default, an unpassed arg sets `ENV …=` to the **empty string**,
+    which then shadows the `.env` file too — the bundle bakes an empty URL and every API call
+    becomes relative to the frontend's own origin, with **no build error**. Fix: a builder
+    guard `RUN test -n "$NEXT_PUBLIC_API_URL" || exit 1` before `npm run build` turns it into
+    a loud failure CI catches.
+  - **Keep local env files out of the build context.** Broaden `.dockerignore` to `.env*` so
+    a stray local `.env.production` can't become a misleading second source of truth. (CI
+    checks out a clean tree without gitignored env files, but a developer's local build
+    would otherwise pull them in.)
+
+- **Non-root: scope write access to only what needs it.** Both images run unprivileged
+  (`app` on the backend, built-in `node` on the frontend). The backend writes downloaded
+  audio to one dir (`app/services/downloads`), so *only* that dir is `chown`ed to `app`; the
+  rest of `/app` stays root-owned and read-only — a compromised process can't rewrite app
+  code. Defense in depth beyond just "not root."
+
+- **Pin the tool, let its fast-moving dep float.** Pinned `spotdl` (was the only unpinned
+  dep) for reproducible builds, but deliberately did **not** hard-pin its transitive `yt-dlp`
+  — yt-dlp must float to keep pace with YouTube changes or downloads break. Pin the thing you
+  control; let the thing that tracks a moving external target update.
+
+- **Floating base tags vs digest pinning — a security/reproducibility tradeoff.** Kept
+  `python:3.11-slim-bookworm` / `node:20-alpine` on their **tags**, not digests. A digest pin
+  is perfectly reproducible but **freezes you on today's vulnerable OS layers** until someone
+  manually bumps it; the floating tag pulls patched layers on each rebuild, which is what
+  actually drains a base-image CVE backlog. Chose currency over bit-for-bit reproducibility
+  here (the app deps are all version-pinned, so builds are still deterministic where it
+  matters).
+
+## 16. Production docker-compose (Gameplan Phase 3)
+
+Concepts worked through building [docker-compose.prod.yaml](docker-compose.prod.yaml) and
+repairing the dev compose. Per-item landing notes live in the gameplan (3.1–3.5); this is
+the reusable *why*.
+
+- **Two compose files, one topology difference: where the database lives.** The dev file
+  runs a `pgvector` **container**; the prod file has **no db service** and points
+  `POSTGRES_HOST` at RDS. Everything else (service names, network, the nginx proxy targets)
+  stays identical so the same [nginx.conf](nginx/nginx.conf) upstreams resolve in both. Keep
+  the *shape* the same across dev/prod; vary only what genuinely differs.
+
+- **Parameterize the whole image ref, not just the tag.** `image: ${BACKEND_IMAGE}` (deploy
+  supplies the full `<acct>.dkr.ecr…/backend:<sha>`) beats hardcoding the registry with a
+  `:${IMAGE_TAG}` suffix. It keeps the AWS account id out of the repo — reinforcing the
+  env_file/image boundary as the **portability seam** (§12): on the Hetzner move only the
+  deploy script's exported vars change, the compose file doesn't. And because the *whole* ref
+  is a variable, SHA-pinned rollback (10.4) is a pure env change, no file edit.
+
+- **`depends_on: condition: service_healthy` is only as good as the image's `HEALTHCHECK`.**
+  The condition reads the container's health stamp — which exists **because** 2.3 baked a
+  `HEALTHCHECK` into both images. Ordering (frontend after backend-healthy, nginx after
+  both-healthy) is therefore free here; on an image with no healthcheck the condition would
+  hang forever. The two phases interlock: harden the image first, gate on it second.
+
+- **`mem_limit` (classic key) vs `deploy.resources.limits` (swarm key).** Under plain
+  `docker compose up` (not swarm), `mem_limit` is the reliable per-container cap;
+  `deploy.resources` is honored by modern compose too but was historically swarm-only, so
+  `mem_limit` is the unambiguous choice. Cap the **one** memory-risky service (backend +
+  transient `spotdl`) so a runaway fails that container, not the box — the small
+  frontend/nginx don't need caps.
+
+- **A shared ACME webroot doesn't need a certbot *container*.** Certbot runs on the **host**
+  (Phase 7), writes the HTTP-01 challenge into `/var/www/certbot`, and nginx bind-mounts that
+  host dir **read-only** to serve it. No compose service, no volume plumbing between
+  containers — the host filesystem is the shared medium. `/etc/letsencrypt` mounts the same
+  way (`:ro`; nginx only reads certs).
+
+- **Compose `config` interpolates host env at *parse* time — use `$$` to defer to the
+  container.** The dev db healthcheck `pg_isready -U $$POSTGRES_USER` needs the doubled `$`
+  so compose passes a literal `$POSTGRES_USER` through to the container, where it resolves
+  from `.env-postgres`. A single `$` would expand (to empty) in the host shell during
+  `docker compose config`. Same rule as any compose value that must survive to runtime.
+
+- **Phase boundary discipline: 3.5 wires nginx, Phase 4 writes nginx.conf.** The prod compose
+  mounts Let's Encrypt certs and opens 80+443, but the *config file* still points at the dev
+  mkcert pems with no server_name/redirect. That's intentional sequencing, not a bug — the
+  prod stack isn't run until the instance exists (Phase 6+), so the interim mismatch never
+  executes. Split work along the plan's phase lines even when it leaves a file temporarily
+  inconsistent with its mounts.
