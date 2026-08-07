@@ -437,28 +437,63 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 3 — Production docker-compose
 
-- [ ] **3.1 Create `docker-compose.prod.yaml` (keep the dev one for local).**
+- [x] **3.1 Create `docker-compose.prod.yaml` (keep the dev one for local).**
+  > **Code landed 2026-08-04.** Added [docker-compose.prod.yaml](../docker-compose.prod.yaml)
+  > (dev [docker-compose.yaml](../docker-compose.yaml) kept + separately repaired, see below).
+  > **Image reference is fully parameterized** — `image: ${BACKEND_IMAGE}` /
+  > `${FRONTEND_IMAGE}`, not a hardcoded ECR URI — so the deploy step (8.3) supplies the
+  > whole ref including the git-SHA tag. Chosen over baking `<acct>.dkr.ecr…:${IMAGE_TAG}`
+  > into the file because it keeps the AWS account id out of the repo (reinforces the
+  > env_file/image portability seam for the planned Hetzner move, §12) and makes SHA-pinned
+  > rollback (10.4) a pure env change. No `build:` anywhere — the box only pulls.
   **How:** Prod compose uses `image: <acct>.dkr.ecr.<region>.amazonaws.com/putyouon/backend:<tag>`
   (and frontend) instead of `build:`. The instance pulls; it never builds.
   **Why:** Building on the box competes with the running app for CPU/RAM (your backend image
   is heavy) and couples deploys to a working toolchain on the host. Pull pre-built, tested
   images instead.
 
-- [ ] **3.2 Remove the DB service and the broken dependency.**
+- [x] **3.2 Remove the DB service and the broken dependency.**
+  > **Code landed 2026-08-04.** The prod compose has **no `db` service** and no
+  > `depends_on: db`; backend reaches RDS purely via `POSTGRES_*` from `.env-postgres`
+  > (confirmed the exact names at [database.py:10-14](../backend/app/db/database.py#L10-L14):
+  > `POSTGRES_DB/USER/PASSWORD/HOST/PORT`). **The dev compose was separately repaired**
+  > (decision: in-scope this phase): the commented `db` block was restored as a real
+  > `pgvector/pgvector:pg16` service *with a `pg_isready` healthcheck*, and backend's
+  > broken `depends_on: [db]` became `depends_on: { db: { condition: service_healthy } }`
+  > so `docker compose up` works locally again (it was dead before — backend depended on a
+  > commented-out service). Dev keeps `build:` + the mkcert localhost certs; only prod
+  > drops the db.
   **How:** Delete the commented `db` block and `depends_on: [db]`. The backend reaches RDS
   via `POSTGRES_HOST=<rds-endpoint>` (plus `POSTGRES_PORT/DB/USER/PASSWORD`) from env
   (Phase 5) — those are the names [database.py](../backend/app/db/database.py) reads.
   **Why:** Today's compose references a `db` service that doesn't exist, so `backend` can't
   start. RDS is your database now.
 
-- [ ] **3.3 Add restart policies, healthchecks, an explicit network, and log limits.**
+- [x] **3.3 Add restart policies, healthchecks, an explicit network, and log limits.**
+  > **Code landed 2026-08-04.** All three prod services get `restart: unless-stopped`, a
+  > named bridge network `putyouon`, and a `json-file` logging block (`max-size: 10m`,
+  > `max-file: 3`). Ordering uses `condition: service_healthy`: frontend waits on backend
+  > healthy, nginx waits on **both** backend and frontend healthy — leaning on the
+  > `HEALTHCHECK`s already baked into both images in 2.3 (no compose-level healthcheck
+  > needed for those). nginx itself gets no healthcheck (nothing depends on it) and keeps
+  > its service name so the existing [nginx.conf](../nginx/nginx.conf) `frontend:3000` /
+  > `backend:8000` upstreams still resolve on the shared network. Verified via
+  > `docker compose config`: the render shows the healthy conditions, restart policy, and
+  > log caps on every service.
   **How:** `restart: unless-stopped` on every service; `depends_on` with
   `condition: service_healthy`; a named bridge network; and a logging block
   (`json-file`, `max-size: 10m`, `max-file: 3`).
   **Why:** Survive crashes and instance reboots; start in the right order; and cap log growth
   so a chatty container can't fill the disk and take down the box.
 
-- [ ] **3.4 Set resource limits, especially on the backend.**
+- [x] **3.4 Set resource limits, especially on the backend.**
+  > **Code landed 2026-08-04.** Backend gets `mem_limit: 2g` (top of the gameplan's
+  > 1.5–2 GB range): ~313 MB for both models plus transient `spotdl`/audio overhead, with
+  > ~2 GB still free for frontend/nginx/OS on a 4 GB `t3.medium`. Cap put on the backend
+  > only per the plan — frontend/nginx are small and left uncapped (the log caps in 3.3 and
+  > image prune in 8.3 are the other disk-growth mitigations). Uses the classic non-swarm
+  > `mem_limit` key (not `deploy.resources`) since this runs under plain `docker compose`;
+  > confirmed the render resolves it to 2147483648 bytes.
   **How:** Give the backend a `mem_limit` sized to (per-worker footprint × workers +
   transient `spotdl`/audio overhead), with headroom below total instance RAM. On a
   `t3.medium`, a ~1.5–2 GB cap leaves room for the frontend/nginx and OS.
@@ -467,7 +502,18 @@ is the last thing you wire because it automates a process you've already proven 
   a leak) shouldn't be able to OOM the host and take nginx/frontend down with it. A cap fails
   one container, not the box.
 
-- [ ] **3.5 Wire nginx to Let's Encrypt certs and expose 80 + 443.**
+- [x] **3.5 Wire nginx to Let's Encrypt certs and expose 80 + 443.**
+  > **Code landed 2026-08-04.** Prod nginx publishes `80:80` **and** `443:443`, mounts
+  > `/etc/letsencrypt:/etc/letsencrypt:ro` (real certs, Certbot-managed on the host, Phase
+  > 7) and the shared ACME webroot `/var/www/certbot:/var/www/certbot:ro`, and **drops the
+  > mkcert `localhost+1*.pem` mounts** entirely (those stay only in the dev compose). The
+  > webroot is a **host bind-mount, not a compose service** — Certbot runs on the box (Phase
+  > 7) and writes the HTTP-01 challenge into `/var/www/certbot`; nginx only needs to *read*
+  > it, hence `:ro`. **Scope note:** this item is only the compose *wiring*. The
+  > [nginx.conf](../nginx/nginx.conf) *contents* still reference the dev `/certs` pems and
+  > have no server_name/redirect/forwarded-headers — that rewrite is **Phase 4**, and this
+  > prod stack isn't run until the instance exists (Phase 6+), so the interim mismatch never
+  > executes.
   **How:** Publish `80:80` and `443:443`; mount the host's `/etc/letsencrypt:/etc/letsencrypt:ro`
   and an ACME webroot. Drop the localhost `.pem` mounts.
   **Why:** Real certs live on the host (managed by Certbot in Phase 7); port 80 is needed for

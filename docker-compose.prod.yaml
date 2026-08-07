@@ -1,0 +1,87 @@
+# Production topology for the EC2 instance (gameplan Phase 3).
+#
+# The box PULLS pre-built, tested images from ECR — it never builds. Building on the
+# host would compete with the running app for CPU/RAM (the backend image is heavy) and
+# couple every deploy to a working toolchain on the box (3.1). Bring the stack up with:
+#   docker compose -f docker-compose.prod.yaml up -d
+#
+# BACKEND_IMAGE / FRONTEND_IMAGE are the full ECR refs including the git-SHA tag,
+# exported by the deploy step (8.3). Keeping the whole ref in a variable — not just the
+# tag — keeps the AWS account id out of the repo (the env_file/image boundary is the
+# portability seam for the planned Hetzner move) and makes rollback a redeploy pinned to
+# a previous SHA (10.4).
+#
+# Secrets and non-secret config in .env-backend / .env-postgres are materialized from
+# SSM Parameter Store at deploy time with chmod 600 (5.2) — never baked into an image.
+# nginx.conf still points at the dev mkcert certs here; its production rewrite
+# (real server_name, HTTP->HTTPS redirect, forwarded headers, TLS hardening) is Phase 4.
+
+services:
+
+  backend:
+    image: ${BACKEND_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - .env-backend
+      - .env-postgres
+    # RDS is the database now — the backend reaches it via POSTGRES_HOST (the RDS
+    # endpoint) from env; there is no db service to depend on (3.2). The image bakes a
+    # HEALTHCHECK on /health, so other services can gate on it being healthy.
+    # Cap memory so a runaway (concurrent ingests spawning spotdl, or a leak) fails this
+    # one container instead of OOM-ing the box and taking nginx/frontend with it (3.4).
+    # ~313 MB for both models + transient spotdl/audio overhead; 2g leaves room for the
+    # frontend/nginx and OS on a 4 GB t3.medium.
+    mem_limit: 2g
+    networks: [putyouon]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: ${FRONTEND_IMAGE}
+    restart: unless-stopped
+    # NEXT_PUBLIC_API_URL is inlined into the client bundle at BUILD time (CI --build-arg,
+    # 8.2) — the runtime container needs no env. Don't start serving a UI whose only
+    # backend isn't ready yet.
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [putyouon]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      # 80 is needed for the ACME HTTP-01 challenge and the HTTP->HTTPS redirect (Phase
+      # 4/7); 443 serves real traffic over the Let's Encrypt cert.
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Real Let's Encrypt certs live on the host, managed by Certbot (Phase 7).
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Shared ACME webroot: Certbot on the host writes the challenge file here, nginx
+      # serves it (read-only — nginx only reads the challenge).
+      - /var/www/certbot:/var/www/certbot:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    networks: [putyouon]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  putyouon:
+    driver: bridge

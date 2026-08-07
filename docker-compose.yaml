@@ -1,17 +1,30 @@
 services:
 
-  #db:
-  # image: pgvector/pgvector:pg16
-  # env_file: .env-postgres
-  # volumes:
-  #  - pgdata:/var/lib/postgresql/data
+  # Local dev database. In production the app talks to RDS instead and there is no db
+  # service (see docker-compose.prod.yaml). Set POSTGRES_HOST=db in .env-postgres so the
+  # backend reaches this container by its service name.
+  db:
+    image: pgvector/pgvector:pg16
+    env_file: .env-postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Gate the backend on Postgres actually accepting connections. $$ defers expansion
+      # to the container so POSTGRES_* resolve from .env-postgres, not the host shell.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   backend:
     build: ./backend
     env_file:
       - .env-backend
       - .env-postgres
-    depends_on: [db]
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build:
