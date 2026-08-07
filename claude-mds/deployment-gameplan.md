@@ -523,26 +523,68 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 4 — Production nginx config
 
-- [ ] **4.1 Real `server_name` + HTTP→HTTPS redirect + ACME challenge.**
+- [x] **4.1 Real `server_name` + HTTP→HTTPS redirect + ACME challenge.**
+  > **Code landed 2026-08-06.** Phase 4 is a **separate [nginx.prod.conf](../nginx/nginx.prod.conf)**
+  > (the dev [nginx.conf](../nginx/nginx.conf) keeps mkcert localhost certs — cert paths
+  > genuinely differ, so a two-file split mirrors the two-compose pattern rather than an
+  > envsubst template). [docker-compose.prod.yaml](../docker-compose.prod.yaml) now mounts
+  > `nginx.prod.conf` at `/etc/nginx/nginx.conf`. The `:80` server has
+  > `server_name putyouon.app;`, `location /.well-known/acme-challenge/ { root /var/www/certbot; }`
+  > (the webroot bind-mounted in 3.5), and `return 301 https://$host$request_uri;` for
+  > everything else. **Apex only** — no `www` (6.4 hasn't set a `www` record; add it +
+  > cert SAN later if wanted).
   **How:** A `:80` server with `server_name putyouon.app;`, a
   `location /.well-known/acme-challenge/ { root /var/www/certbot; }`, and
   `return 301 https://$host$request_uri;` for everything else.
   **Why:** Certbot HTTP-01 validation hits port 80; all real traffic should be forced to TLS.
 
-- [ ] **4.2 Forward the headers the app depends on.**
+- [x] **4.2 Forward the headers the app depends on.**
+  > **Code landed 2026-08-06.** All four headers (`Host`, `X-Real-IP`, `X-Forwarded-For`,
+  > `X-Forwarded-Proto`) set **once at `http` level** so both the `/` and `/api/` locations
+  > inherit them (the locations add only `proxy_pass`/timeouts, which does *not* reset
+  > inherited `proxy_set_header`s — DRY without repetition). This is what makes uvicorn's
+  > `--proxy-headers` (1.4) see the real client IP, so `slowapi` keys the unauthenticated
+  > login limits per-user instead of one site-wide nginx bucket. **Backported the same
+  > headers to the dev [nginx.conf](../nginx/nginx.conf)** (decision: keep dev/prod aligned)
+  > so dev exercises the same IP-keyed rate limiting. Confirmed the app reads these:
+  > HSTS/scheme + slowapi at [main.py:60-102](../backend/app/main.py#L60-L102).
   **How:** On the proxy locations add `proxy_set_header X-Forwarded-Proto $scheme;`,
   `X-Forwarded-For $proxy_add_x_forwarded_for;`, `X-Real-IP $remote_addr;`, `Host $host;`.
   **Why:** The backend runs `--proxy-headers` and uses these for HSTS correctness and for
   `slowapi` to rate-limit by real client IP. Today's [nginx.conf](../nginx/nginx.conf) only
   sets `Host`.
 
-- [ ] **4.3 Raise timeouts and body limits for the ML path.**
+- [x] **4.3 Raise timeouts and body limits for the ML path.**
+  > **Code landed 2026-08-06.** `proxy_read_timeout`/`proxy_send_timeout` set to **300s** on
+  > `/api/` (lifts nginx's 60s default so a slow audio-download + embedding request isn't cut
+  > off with a 504). `client_max_body_size 10m` — verified there are **no upload endpoints**
+  > (no `UploadFile`/`File`/multipart anywhere in `backend/app`; audio is fetched server-side
+  > by spotdl), so bodies are small JSON and 10m is generous headroom, not a real constraint.
+  > Also added a dedicated **`location /health` → backend** (root-mounted, no `/api` prefix —
+  > [health.py:10](../backend/app/api/v1/health.py#L10)) so the external uptime monitor (9.2)
+  > and nginx upstream check hit a stable path instead of falling through to the frontend.
+  > Both landed in prod and dev.
   **How:** `client_max_body_size` to a sane cap, and bump `proxy_read_timeout` /
   `proxy_send_timeout` on `/api/` (the ingest/classify path can run long).
   **Why:** Audio download + embedding is slow; nginx's default 60s read timeout can cut off
   legitimate long requests with a 504.
 
-- [ ] **4.4 TLS hardening + gzip.**
+- [x] **4.4 TLS hardening + gzip.**
+  > **Code landed 2026-08-06.** Mozilla-**intermediate** TLS: `TLSv1.2 TLSv1.3`,
+  > `ssl_prefer_server_ciphers off`, session cache/timeout, `ssl_session_tickets off`, plus
+  > `http2 on;`. **ECDHE-only cipher list** deliberately — it drops the DHE suites so **no
+  > `ssl_dhparam` file is needed** (no extra host artifact to generate/mount), still an SSL
+  > Labs A+. `gzip on` for text/JSON. **Two intentional deviations from this item's letter:**
+  > (1) **OCSP stapling omitted** — Let's Encrypt **retired OCSP in 2025** (issued certs no
+  > longer carry an OCSP URL), so `ssl_stapling` would be inert and log a warning on every
+  > reload; documented inline. (2) **HSTS not set in nginx** — the app already emits it via
+  > the `ENABLE_HSTS` middleware ([main.py:90-92](../backend/app/main.py#L90-L92)); setting it
+  > here too would duplicate the header. Both configs validated with **crossplane**
+  > (nginx Inc's config parser) — `status: ok`; strict mode flags only `http2` in prod, a
+  > false positive from crossplane 0.5.8's pre-1.25.1 directive map (`http2 on;` is the
+  > correct modern form for the `nginx:alpine` we ship). The real `nginx -t` was deferred:
+  > Docker Desktop's runtime was wedged this session (couldn't start any container); it'll
+  > also be exercised when the stack first boots on the instance (Phase 6+).
   **How:** Mozilla "intermediate" `ssl_protocols`/`ssl_ciphers`, OCSP stapling, `gzip on` for
   text/JSON.
   **Why:** A clean SSL Labs grade and smaller responses. Cheap, standard, expected at scale.
