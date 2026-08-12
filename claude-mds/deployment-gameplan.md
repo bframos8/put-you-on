@@ -595,7 +595,21 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 5 — Secrets in SSM Parameter Store
 
-- [ ] **5.1 Define a parameter namespace.**
+- [x] **5.1 Define a parameter namespace.**
+  > **Code landed 2026-08-11.** The namespace is now defined *as code* in a new
+  > [deploy/](../deploy/) dir: [deploy/ssm-parameters.md](../deploy/ssm-parameters.md) is the
+  > authoritative manifest (every param, `SecureString` vs `String`, required?, notes), and
+  > [deploy/ssm-seed.sh](../deploy/ssm-seed.sh) creates/updates them from a **gitignored**
+  > local values file ([deploy/prod.env.example](../deploy/prod.env.example) is the committed
+  > template; `deploy/prod.env` is ignored). **KMS decision: AWS-managed `alias/aws/ssm`**
+  > (free, no `--key-id` needed) — so the Phase-0 `kms:Decrypt` placeholder tightens to that
+  > key's ARN (`aws kms describe-key --key-id alias/aws/ssm`). Type split: SecureString for
+  > `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEYS`, `SPOTIFY_CLIENT_ID/SECRET`, `SENTRY_DSN`,
+  > `POSTGRES_USER/PASSWORD/DB`; String for the endpoints/config. **`DAILY_LIMIT_BYPASS` is
+  > not in the contract** — the seed script actively *skips* it (verified), so it can't reach
+  > prod even if listed in the values file. The actual `put-parameter` calls are yours to run
+  > (no AWS creds here); the tooling is tested (seed type-routing + unknown-key skip verified
+  > against a fake `aws`).
   **How:** Store each secret as a **SecureString** under `/putyouon/prod/…`:
   `SESSION_SECRET`, **`TOKEN_ENCRYPTION_KEYS`** (required — both the app and alembic
   refuse to start without it, [crypto.py](../backend/app/core/crypto.py)),
@@ -609,7 +623,20 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Central, encrypted (KMS), IAM-scoped, and auditable — no plaintext secrets in the
   repo, the image, or CI logs.
 
-- [ ] **5.2 Materialize secrets at deploy time.**
+- [x] **5.2 Materialize secrets at deploy time.**
+  > **Code landed 2026-08-11.** [deploy/materialize-env.sh](../deploy/materialize-env.sh)
+  > runs `aws ssm get-parameters-by-path --path /putyouon/prod --with-decryption --output
+  > json` (JSON, not `--output text`, so URL/base64/special-char values survive; the CLI
+  > auto-paginates so param count doesn't matter) and splits by name: `POSTGRES_*` →
+  > `.env-postgres`, everything else → `.env-backend`, next to `docker-compose.prod.yaml`.
+  > Parses with **python3** (present on AL2023) and writes raw `KEY=VALUE` (compose reads the
+  > whole line after `=`, so no quoting; values may contain `=`/`#`). `umask 077` + explicit
+  > `chmod 600`. **Fails loudly** if `TOKEN_ENCRYPTION_KEYS`/`SESSION_SECRET`/
+  > `POSTGRES_PASSWORD` are missing — a misconfigured SSM becomes a failed deploy, not a
+  > broken boot. **Verified end-to-end** with a fake `aws` returning canned JSON (including a
+  > `p@ss#w=rd` password and a `k1=,k2=` token value): correct split, 600 perms, no
+  > `POSTGRES_*` leak into the backend file, and the missing-required guard exits non-zero.
+  > Phase 8's SSM step just calls this script on the instance.
   **How:** The deploy script (Phase 8) runs
   `aws ssm get-parameters-by-path --path /putyouon/prod --with-decryption` and writes
   `.env-backend` / `.env-postgres` on the instance with `chmod 600`, owned by root, then
@@ -621,7 +648,15 @@ is the last thing you wire because it automates a process you've already proven 
   resolve to `/` inside the image and are silent no-ops; don't "fix" a config problem by
   baking env files into the image.
 
-- [ ] **5.3 Keep `.env.example` authoritative, never commit real env.**
+- [x] **5.3 Keep `.env.example` authoritative, never commit real env.**
+  > **Code landed 2026-08-11.** [backend/.env.example](../backend/.env.example) +
+  > [backend/.env-postgres.example](../backend/.env-postgres.example) were already complete
+  > (every var documented from Phases 1/2), so this was mostly upkeep: added a header pointer
+  > from `.env.example` to [deploy/ssm-parameters.md](../deploy/ssm-parameters.md) (the prod
+  > contract) so the two stay linked, and confirmed `.gitignore` keeps real env out — its
+  > `.env*` rule doesn't match `deploy/prod.env` (name doesn't start with `.env`), so added an
+  > explicit `deploy/prod.env` ignore while leaving the `deploy/prod.env.example` template
+  > tracked.
   **How:** `.gitignore` already covers `.env-*` (keep it). Update
   [backend/.env.example](../backend/.env.example) whenever a var is added.
   **Why:** New contributors and the deploy script both rely on the example as the contract.
