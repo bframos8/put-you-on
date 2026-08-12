@@ -13,8 +13,8 @@
 #
 # Secrets and non-secret config in .env-backend / .env-postgres are materialized from
 # SSM Parameter Store at deploy time with chmod 600 (5.2) — never baked into an image.
-# nginx.conf still points at the dev mkcert certs here; its production rewrite
-# (real server_name, HTTP->HTTPS redirect, forwarded headers, TLS hardening) is Phase 4.
+# nginx uses nginx/nginx.prod.conf (real server_name, HTTP->HTTPS redirect, forwarded
+# headers, TLS hardening, gzip — Phase 4), separate from the dev nginx.conf.
 
 services:
 
@@ -64,7 +64,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
       # Real Let's Encrypt certs live on the host, managed by Certbot (Phase 7).
       - /etc/letsencrypt:/etc/letsencrypt:ro
       # Shared ACME webroot: Certbot on the host writes the challenge file here, nginx

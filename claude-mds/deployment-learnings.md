@@ -347,3 +347,69 @@ the reusable *why*.
   prod stack isn't run until the instance exists (Phase 6+), so the interim mismatch never
   executes. Split work along the plan's phase lines even when it leaves a file temporarily
   inconsistent with its mounts.
+
+## 17. Production nginx config (Gameplan Phase 4)
+
+Concepts worked through writing [nginx.prod.conf](nginx/nginx.prod.conf). Per-item landing
+notes live in the gameplan (4.1–4.4); this is the reusable *why*.
+
+- **Two config files, split on what actually differs: the cert paths.** dev
+  [nginx.conf](nginx/nginx.conf) reads mkcert `/certs/localhost+1.pem` on `:443` only; prod
+  [nginx.prod.conf](nginx/nginx.prod.conf) reads the real LE cert and adds the `:80`
+  redirect/ACME server. Considered one templated file with the nginx image's
+  `envsubst`/`/etc/nginx/templates` mechanism, but a static file per environment is simpler
+  and mirrors the two-compose split. Everything cert-*independent* (forwarded headers,
+  `/health`, gzip, `/api` timeouts) was **backported to dev** so both exercise the same
+  proxying — keep dev and prod behaviourally aligned, vary only the irreducible difference.
+
+- **Set shared `proxy_set_header`s once at `http` level; they inherit downward — but any
+  `proxy_set_header` in a narrower block resets the whole set.** nginx directive inheritance
+  is by *replacement, not merge*: a `location` that adds even one `proxy_set_header` silently
+  drops all the inherited ones. So the four forwarded headers live at `http` scope and the
+  `location`s add only `proxy_pass`/`proxy_*_timeout` (non-`proxy_set_header` directives,
+  which don't trigger the reset). DRY and correct; adding a per-location header later means
+  re-adding all four there.
+
+- **The forwarded headers are load-bearing, not cosmetic.** `X-Forwarded-For`/`-Proto` are
+  exactly what uvicorn's `--proxy-headers` (1.4) consumes so `slowapi` rate-limits by real
+  client IP instead of collapsing every login attempt into one site-wide nginx-IP bucket.
+  nginx setting only `Host` (the old config) quietly defeats the per-user login limits.
+
+- **Don't duplicate a header two layers set.** HSTS is emitted by the app's `ENABLE_HSTS`
+  middleware; adding `add_header Strict-Transport-Security` in nginx too would send it twice.
+  One authority per header — here, the app owns HSTS, nginx owns TLS.
+
+- **OCSP stapling is now dead config on Let's Encrypt certs.** LE **retired OCSP in 2025** —
+  newly issued certs carry no OCSP URL — so `ssl_stapling on;` does nothing but log
+  `ssl_stapling ignored, no OCSP responder URL` on every reload. Omitted it (and its
+  `ssl_trusted_certificate`/`resolver` scaffolding) rather than ship a directive the gameplan
+  named from an earlier era. A reminder to re-check a plan's *specific* directives against the
+  CA's current behaviour, not just copy the recipe.
+
+- **ECDHE-only ciphers dodge the `ssl_dhparam` dependency.** Mozilla "intermediate" lists DHE
+  suites, which need a generated `dhparam.pem` mounted on the host. Dropping DHE for an
+  ECDHE-only list keeps an SSL Labs A+ with **zero extra host artifacts** — one fewer thing to
+  generate in Phase 6/7 and mount. TLS 1.3 (which doesn't use these suites at all) covers
+  modern clients regardless.
+
+- **Validating an nginx config offline: `nginx -t` needs two things faked, and crossplane is
+  the fallback when Docker itself is down.** `nginx -t` in a disposable `nginx:alpine` is the
+  real (semantic) check, but two things trip it in isolation:
+  - **It stats the `ssl_certificate` files.** Generate a throwaway self-signed cert on the
+    host and bind-mount it at the exact paths
+    (`/etc/letsencrypt/live/putyouon.app/{fullchain,privkey}.pem`) — the same "fake the
+    environment the check demands" trick as the Phase-2 busybox build-context probes.
+  - **It resolves literal upstream hostnames at config-load.** `proxy_pass http://backend:8000;`
+    makes `nginx -t` do a DNS lookup for `backend`; in a standalone container that isn't on the
+    compose network it fails `[emerg] host not found in upstream "backend"` — a *test artifact,
+    not a config bug*. Fix with `--add-host backend:127.0.0.1 --add-host frontend:127.0.0.1`
+    (or run it on the compose network) so the names resolve.
+  - **When Docker's runtime can't even start a container** (it happened this session — `docker
+    ps`/`images` worked but `docker run` hung on *any* image, fixed only by a Docker Desktop
+    update), fall back to **crossplane** (`pip install crossplane`), nginx Inc's own parser:
+    `crossplane.parse(path, strict=True)` checks braces, directive contexts, and arg counts
+    against nginx's directive map with no nginx, root, or certs needed. Its blind spot is
+    version lag — crossplane 0.5.8's map predates nginx 1.25.1, so it strict-flags the modern
+    `http2 on;` as "unknown" (a false positive later confirmed against `nginx -t` on 1.29.7).
+    crossplane validates *structure*; only `nginx -t` also validates *semantics* — treat a
+    clean crossplane parse as necessary-but-not-sufficient.
