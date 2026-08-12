@@ -579,12 +579,14 @@ is the last thing you wire because it automates a process you've already proven 
   > longer carry an OCSP URL), so `ssl_stapling` would be inert and log a warning on every
   > reload; documented inline. (2) **HSTS not set in nginx** — the app already emits it via
   > the `ENABLE_HSTS` middleware ([main.py:90-92](../backend/app/main.py#L90-L92)); setting it
-  > here too would duplicate the header. Both configs validated with **crossplane**
-  > (nginx Inc's config parser) — `status: ok`; strict mode flags only `http2` in prod, a
-  > false positive from crossplane 0.5.8's pre-1.25.1 directive map (`http2 on;` is the
-  > correct modern form for the `nginx:alpine` we ship). The real `nginx -t` was deferred:
-  > Docker Desktop's runtime was wedged this session (couldn't start any container); it'll
-  > also be exercised when the stack first boots on the instance (Phase 6+).
+  > here too would duplicate the header. Both configs pass **`nginx -t`** on nginx 1.29.7
+  > (`test is successful`) — run in a throwaway `nginx:alpine` with a host-generated cert
+  > bind-mounted at the LE path and `--add-host backend/frontend:127.0.0.1` so the literal
+  > upstream names resolve at config-load. (Docker's runtime was wedged mid-session and
+  > couldn't start any container; a Docker Desktop update fixed it. While it was down, a
+  > **crossplane** strict-parse stood in — its lone `http2` "unknown directive" flag was a
+  > false positive from crossplane 0.5.8's pre-1.25.1 map, since confirmed: 1.29.7 accepts
+  > `http2 on;`.)
   **How:** Mozilla "intermediate" `ssl_protocols`/`ssl_ciphers`, OCSP stapling, `gzip on` for
   text/JSON.
   **Why:** A clean SSL Labs grade and smaller responses. Cheap, standard, expected at scale.

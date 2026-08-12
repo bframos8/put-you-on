@@ -392,17 +392,24 @@ notes live in the gameplan (4.1–4.4); this is the reusable *why*.
   generate in Phase 6/7 and mount. TLS 1.3 (which doesn't use these suites at all) covers
   modern clients regardless.
 
-- **Two ways to validate an nginx config offline, and when each applies.** The intended check
-  was `nginx -t` in a disposable `nginx:alpine` container — but `nginx -t` stats the
-  `ssl_certificate` files, so you must fake them at the exact paths (generate a throwaway
-  self-signed cert at `/etc/letsencrypt/live/putyouon.app/{fullchain,privkey}.pem` on the host
-  and bind-mount it in — the same "fake the environment the check demands" trick as the
-  busybox build-context probes in Phase 2). When Docker's runtime is wedged and can't start a
-  container at all, fall back to **crossplane** (`pip install crossplane`), nginx Inc's own
-  config parser: `crossplane.parse(path, strict=True)` checks brace matching, directive
-  contexts, and arg counts against nginx's directive map without needing nginx, root, or the
-  cert files. Its one blind spot is version lag — crossplane 0.5.8's directive map predates
-  nginx 1.25.1, so it strict-flags the modern `http2 on;` directive as "unknown" (a false
-  positive). crossplane validates *structure*; only `nginx -t` also validates *semantics*
-  (cipher strings nginx rejects at load, cert loadability) — so treat a clean crossplane parse
-  as necessary-but-not-sufficient and still expect the first real boot to be the semantic check.
+- **Validating an nginx config offline: `nginx -t` needs two things faked, and crossplane is
+  the fallback when Docker itself is down.** `nginx -t` in a disposable `nginx:alpine` is the
+  real (semantic) check, but two things trip it in isolation:
+  - **It stats the `ssl_certificate` files.** Generate a throwaway self-signed cert on the
+    host and bind-mount it at the exact paths
+    (`/etc/letsencrypt/live/putyouon.app/{fullchain,privkey}.pem`) — the same "fake the
+    environment the check demands" trick as the Phase-2 busybox build-context probes.
+  - **It resolves literal upstream hostnames at config-load.** `proxy_pass http://backend:8000;`
+    makes `nginx -t` do a DNS lookup for `backend`; in a standalone container that isn't on the
+    compose network it fails `[emerg] host not found in upstream "backend"` — a *test artifact,
+    not a config bug*. Fix with `--add-host backend:127.0.0.1 --add-host frontend:127.0.0.1`
+    (or run it on the compose network) so the names resolve.
+  - **When Docker's runtime can't even start a container** (it happened this session — `docker
+    ps`/`images` worked but `docker run` hung on *any* image, fixed only by a Docker Desktop
+    update), fall back to **crossplane** (`pip install crossplane`), nginx Inc's own parser:
+    `crossplane.parse(path, strict=True)` checks braces, directive contexts, and arg counts
+    against nginx's directive map with no nginx, root, or certs needed. Its blind spot is
+    version lag — crossplane 0.5.8's map predates nginx 1.25.1, so it strict-flags the modern
+    `http2 on;` as "unknown" (a false positive later confirmed against `nginx -t` on 1.29.7).
+    crossplane validates *structure*; only `nginx -t` also validates *semantics* — treat a
+    clean crossplane parse as necessary-but-not-sufficient.
