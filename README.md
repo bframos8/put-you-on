@@ -44,66 +44,9 @@ AI tools:
 
 # Setting up on a new machine
 
-`git clone` gets you the code, the Claude docs in `claude-mds/`, the skills in
-`.claude/skills/`, and the `.env` templates. Four things it deliberately does not
-get you, because they are secrets or licensed files.
-
-**1. Fonts (required — the build fails without them).**
-`frontend/src/assets/fonts/` is gitignored. `frontend/src/app/layout.tsx` loads nine
-files through `next/font/local`, which resolves them at build time, so both
-`npm run build` and `docker compose build frontend` fail on a fresh clone. Copy the
-directory over by hand. Only `SmileySans-Oblique.woff2` is in the repo; the Helvetica
-and Estrella files are commercially licensed and must not be committed to a public
-repo.
-
-**2. TLS certificates.** The nginx service bind-mounts `frontend/localhost+1.pem`
-and `frontend/localhost+1-key.pem`, and `npm run dev` passes them to Next. Do not
-copy these — the `-key.pem` is a private key. Regenerate:
-
-```bash
-brew install mkcert && mkcert -install
-cd frontend && mkcert 127.0.0.1 localhost
-```
-
-**3. Local environment files.** Copy each template and fill it in:
-
-```bash
-cp backend/.env.example           .env-backend
-cp backend/.env-postgres.example  .env-postgres
-cp frontend/.env.local.example    frontend/.env.local
-```
-
-`SESSION_SECRET` and `TOKEN_ENCRYPTION_KEYS` should be generated fresh rather than
-copied (the generation commands are in `backend/.env.example`). Postgres credentials
-are yours to choose. Only the Spotify client ID and secret have to match the other
-machine — take them from the Spotify developer dashboard.
-
-**4. AWS credentials**, if you intend to deploy or touch SSM: `aws configure`.
-Production secrets live in Parameter Store and are materialized at deploy, so nothing
-production-related needs to be copied between machines. See `deploy/ssm-parameters.md`.
-
-## Dependencies
-
-Docker covers most of this. `docker compose up -d` builds the backend and frontend
-images from `backend/backend_requirements.txt` and `frontend/package-lock.json`, and
-pulls `pgvector/pgvector:pg16` and `nginx:alpine`. No host Python or Node needed to
-*run* the web app.
-
-Three things still need host-side setup, because they are not containerized:
-
-- **The data pipeline** has no Dockerfile. It runs on the host from
-  `data_pipeline/pipeline_requirements.txt` in a venv.
-- **Tests.** `backend/.dockerignore` excludes `tests/` and `test-requirements.txt`
-  from the image, so pytest runs on the host against a venv.
-- **Alembic**, when running migrations from the host rather than exec'ing into the
-  container.
-
-```bash
-python3.11 -m venv .venv.backend  && .venv.backend/bin/pip  install -r backend/backend_requirements.txt -r backend/test-requirements.txt
-python3.11 -m venv .venv.pipeline && .venv.pipeline/bin/pip install -r data_pipeline/pipeline_requirements.txt
-```
-
-Verified against Python 3.11 and Node 20 (the version in the frontend image).
+A fresh clone does not include secrets, licensed fonts, or AWS tooling. The full
+checklist — including what deployment work needs versus what app development needs —
+is in [claude-mds/set_up_new_machine.md](claude-mds/set_up_new_machine.md).
 
 # Project Steps
 Development Phase 1: 

@@ -663,6 +663,61 @@ is the last thing you wire because it automates a process you've already proven 
 
 ---
 
+## Bonus Phase A — Multi-machine readiness & pre-Phase-6 prerequisites
+
+> Inserted after the fact. Phases 1–5 were all **code** — they landed from one checkout
+> and needed no AWS credentials. Phase 6 is the first phase that creates **real, billable
+> AWS resources**, and it is the first that will be picked up from a **second machine**.
+> Three things have to be true before that is safe, and none of them were in the original
+> plan because the original plan assumed one machine and deferred every `aws` call.
+>
+> Do these in order. A.2 blocks Phase 6; A.3 does not, but is much cheaper to add now
+> than after two machines have both pushed.
+
+- [ ] **A.1 Bring the working machine up to full capability.**
+  **How:** Follow [set_up_new_machine.md](set_up_new_machine.md). For Phase 6
+  specifically only the *AWS / deployment work* section is required — AWS CLI v2 +
+  credentials, the Session Manager plugin, a psql client, and Porkbun access. The app
+  development section (fonts, mkcert, env files, venvs) can wait until you actually
+  touch application code.
+  **Why:** 6.2 closes port 22 entirely, so the Session Manager plugin is the *only*
+  path to a shell on the instance — discovering it is missing while debugging a
+  half-provisioned box is the worst time. The licensed fonts are gitignored and are a
+  **build-time** input to `next/font/local`, so a machine without them cannot
+  `docker compose build frontend` at all; that is invisible until the first frontend
+  build.
+
+- [ ] **A.2 Seed the SSM parameters. (Blocks Phase 6.)**
+  **How:** `cp deploy/prod.env.example deploy/prod.env`, fill in real production values,
+  then `./deploy/ssm-seed.sh`. Verify with
+  `aws ssm get-parameters-by-path --path /putyouon/prod --query 'Parameters[].Name'`.
+  **Why:** Phase 5 is checked because the *tooling* landed — 5.1's own note says "the
+  actual `put-parameter` calls are yours to run (no AWS creds here)". The namespace is
+  still empty. Every later phase assumes it is populated: 5.2's `materialize-env.sh`
+  fails loudly on a missing `TOKEN_ENCRYPTION_KEYS`/`SESSION_SECRET`/`POSTGRES_PASSWORD`,
+  and 8.3 calls it on every deploy.
+  **Risk:** `TOKEN_ENCRYPTION_KEYS` must be the key that encrypted the existing token
+  rows in `pyo_db` — generating a fresh one silently orphans every stored Spotify token
+  (they fail to decrypt at use, not at boot). Reuse, don't regenerate. `deploy/prod.env`
+  is gitignored and will not sync between machines; after seeding, **SSM is the source of
+  truth** — pull from it rather than keeping a second copy.
+
+- [ ] **A.3 CI workflow — test on every PR and push.** *(Pulled forward from 8.1.)*
+  **How:** Exactly as specified in 8.1 below — build the backend image and run pytest
+  inside it with the test files mounted back in, plus `npm ci` / `npm run lint` /
+  `npm run build` for the frontend. No AWS involvement, so this has no dependency on
+  Phase 6 or 7.
+  **Why:** The original 8.1 rationale (test environment equals production) still holds,
+  but there is now a second reason to do it *before* Phase 6 rather than after: with two
+  machines able to push, "works on mine" is no longer verifiable by either one. The
+  frontend is where they will drift first — machine 2 needs hand-copied fonts to build
+  at all — and a PR check that runs `npm run build` catches a missing or partial font
+  copy immediately instead of at deploy time. It also removes the host venv from the
+  backend test path, since the same containerized command runs identically on both
+  machines.
+
+---
+
 ## Phase 6 — Provision & bootstrap the EC2 instance
 
 - [ ] **6.1 Launch the instance.**
@@ -753,6 +808,10 @@ is the last thing you wire because it automates a process you've already proven 
 > [deployment-learnings.md §14](deployment-learnings.md).
 
 - [ ] **8.1 CI workflow — test on every PR and push.**
+  > **Moved to [Bonus Phase A](#bonus-phase-a--multi-machine-readiness--pre-phase-6-prerequisites)
+  > (A.3) — do it there, before Phase 6.** It has no AWS dependency, and with a second
+  > machine pushing, CI is what keeps the two honest. The spec below is unchanged and
+  > remains the authority on *how*; only the sequencing moved. Tick A.3, not this box.
   **How:**
   - **Backend:** build the backend image, then run the tests **in a container from that
     image**, mounting the test files back in (2.1 excludes them from the image, and pytest
