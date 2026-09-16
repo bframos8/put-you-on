@@ -413,3 +413,55 @@ notes live in the gameplan (4.1–4.4); this is the reusable *why*.
     `http2 on;` as "unknown" (a false positive later confirmed against `nginx -t` on 1.29.7).
     crossplane validates *structure*; only `nginx -t` also validates *semantics* — treat a
     clean crossplane parse as necessary-but-not-sufficient.
+
+## 18. Secrets in SSM Parameter Store (Gameplan Phase 5)
+
+Concepts from wiring [deploy/](deploy/) — the SSM seed + materialize scripts. Per-item
+landing notes live in the gameplan (5.1–5.3); this is the reusable *why*.
+
+- **The `env_file` boundary is the portability seam — keep all AWS in the deploy scripts.**
+  The app reads plain env vars and never calls `boto3`. Secrets reach it only as
+  `.env-backend`/`.env-postgres` files that [materialize-env.sh](deploy/materialize-env.sh)
+  writes from SSM at deploy. That one script is the entire AWS-secrets surface: swap it for
+  SOPS/Doppler/plain files and the app half lifts to Hetzner/Neon unchanged (§12).
+
+- **Flat SSM path, split into two files by name prefix.** Params live flat at
+  `/putyouon/prod/NAME`; the materializer routes `POSTGRES_*` → `.env-postgres` (the file the
+  dev `db` service also reads) and everything else → `.env-backend`, matching the two
+  `env_file:` entries. In prod the split is cosmetic (the backend loads both), but keeping it
+  makes each file's contract match its `.example`.
+
+- **Parse SSM as JSON, not `--output text`.** Values carry URLs, base64 Fernet keys, and
+  arbitrary passwords — tabs/spaces/newlines mangle `--output text`. `--output json` + a
+  python3 pass is robust, and the AWS CLI **auto-paginates**, so all params return in one
+  `Parameters[]` regardless of the 10-per-page API default (a raw API call would need
+  `NextToken`).
+
+- **compose `env_file` reads the whole line after `=` — so write raw `KEY=VALUE`, no quotes.**
+  A password like `p@ss#w=rd` or a `TOKEN_ENCRYPTION_KEYS=k1=,k2=` value round-trips
+  correctly because the materializer only splits the *name* off the front and never quotes.
+  Quoting would be wrong here (compose would treat the quotes as literal). Verified against a
+  fake `aws` returning those exact tricky values.
+
+- **Make a misconfig a failed *deploy*, not a broken *boot*.** The materializer exits
+  non-zero if `TOKEN_ENCRYPTION_KEYS`/`SESSION_SECRET`/`POSTGRES_PASSWORD` are missing, so an
+  incompletely-seeded SSM path fails the deploy step loudly instead of producing env files
+  that crash the container after `up -d`. Fail as early and as loudly as the pipeline allows.
+
+- **Encode the "never in prod" rule where it's enforced, not just documented.**
+  `DAILY_LIMIT_BYPASS` isn't in the seed script's key lists, so the script *actively skips* it
+  ("unknown key") even if an operator pastes it into the values file — the guard is
+  executable, not a comment. Same spirit as the app's startup warning: defense at every layer.
+
+- **A file that doesn't start with `.env` isn't caught by an `.env*` gitignore rule.**
+  `deploy/prod.env` holds real secrets but `.env*` only matches names *beginning* with `.env`
+  (path components), so it slipped through — added an explicit `deploy/prod.env` ignore. The
+  committed template `deploy/prod.env.example` is safe (ends in `.example`, no real values).
+  Verify a new secret-bearing filename is actually ignored; don't assume a broad-looking glob
+  covers it.
+
+- **Testing AWS-calling scripts without AWS: a fake `aws` on `PATH`.** Both scripts shell out
+  to `aws`; dropping a tiny `aws` shim (that prints canned `get-parameters-by-path` JSON, or
+  echoes the `put-parameter` `--name/--type`) into a dir prepended to `PATH` exercises the
+  real parse/split/route/permission logic end-to-end with zero AWS creds — the same
+  "fake the environment the check demands" pattern used for the nginx and build-context checks.

@@ -92,6 +92,11 @@ yarn-error.log*
 # whose broad match would otherwise re-ignore them and defeat the opt-in above).
 !.env*.example
 
+# Local prod values used to seed SSM (deploy/ssm-seed.sh) — real secrets, never commit.
+# The name doesn't start with ".env" so the rule above doesn't catch it; ignore it here.
+# The committed template is deploy/prod.env.example (not matched by this rule).
+deploy/prod.env
+
 # vercel
 .vercel
 
