@@ -40,7 +40,13 @@ Data pipeline for database populating:
     - Embedding and audio metadata is inserted into songs table in database. 
 
 AI tools:
-- Claude is my tool of choice. I use skills for consistent code generation and direction(/frontend-design and /feature-dev). I also have a claude.md file for local use to save my personal preferences in development. 
+- Claude is my tool of choice. I use skills for consistent code generation and direction(/frontend-design and /feature-dev). CLAUDE.md holds project context and my development preferences, and is committed so it travels between machines.
+
+# Setting up on a new machine
+
+A fresh clone does not include secrets, licensed fonts, or AWS tooling. The full
+checklist — including what deployment work needs versus what app development needs —
+is in [claude-mds/set_up_new_machine.md](claude-mds/set_up_new_machine.md).
 
 # Project Steps
 Development Phase 1: 
