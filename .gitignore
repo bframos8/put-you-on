@@ -104,9 +104,6 @@ deploy/prod.env
 *.tsbuildinfo
 next-env.d.ts
 
-#Commands used in this repo
-.commands
-
 /reference
 /frontend/src/assets/fonts
 
@@ -119,3 +116,9 @@ practice/
 # Claude Dev Files
 backend/agents
 frontend/agent-handoffs-FE
+
+# Claude Code: share CLAUDE.md, .claude/skills/ and .claude/settings.json across
+# machines; keep per-machine state and personal overrides local.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.tmp_claude/
