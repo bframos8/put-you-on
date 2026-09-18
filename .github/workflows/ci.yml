@@ -1,0 +1,84 @@
+# CI: test on every PR and on every push to main (gameplan A.3 / 8.1).
+# Build & push to ECR (8.2) and deploy (8.3) are separate workflows.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Nothing here writes to the repo or talks to AWS.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Test inside the image we'd ship, so the test environment is production's
+      # (and essentia-tensorflow never gets installed on a raw runner). The GHA layer
+      # cache keeps the heavy pip layer until backend_requirements.txt changes.
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: backend
+          load: true
+          tags: putyouon-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      # backend/.dockerignore keeps the tests out of the image, so mount them back in.
+      # The image runs as the non-root `app` user, which can't write to the system
+      # site-packages: pip falls back to a user install and puts the `pytest` script in
+      # ~/.local/bin, which isn't on PATH. `python -m pytest` still finds the module.
+      # We stay as `app` rather than --user root so tests run as production does.
+      # -p no:cacheprovider: /app is root-owned, so pytest can't write .pytest_cache
+      # there and would only warn about it.
+      # No database or env wiring needed: tests/conftest.py injects env vars and mocks
+      # the DB and the model load.
+      - name: Run pytest in the image
+        run: >
+          docker run --rm
+          -v ./backend/tests:/app/tests
+          -v ./backend/pytest.ini:/app/pytest.ini
+          -v ./backend/test-requirements.txt:/app/test-requirements.txt
+          putyouon-backend:ci
+          sh -c "pip install -r test-requirements.txt && python -m pytest -p no:cacheprovider"
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Helvetica and Estrella files are commercially licensed, so they can't be
+      # in this public repo, but next/font/local needs them at build time. They live
+      # in a private repo instead, read through a read-only deploy key.
+      # Checked out beside the app rather than straight into frontend/src/assets/fonts/:
+      # checkout would wipe that directory, including the tracked SmileySans file. It
+      # also stays outside frontend/, so it never enters the 8.2 image build context.
+      - uses: actions/checkout@v7
+        with:
+          repository: bframos8/put-you-on-fonts
+          ssh-key: ${{ secrets.FONTS_DEPLOY_KEY }}
+          path: .fonts
+          persist-credentials: false
+      - run: cp .fonts/*.ttf .fonts/*.otf frontend/src/assets/fonts/
+
+      # Node 20 to match the frontend Dockerfile's node:20-alpine.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+      # NEXT_PUBLIC_* is inlined at build time; build with the production value.
+      - run: npm run build
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: https://putyouon.app

@@ -31,7 +31,9 @@ Two things Docker does not provide and that a fresh clone will not have:
 mkcert certificates at `frontend/localhost+1*.pem` (bind-mounted by the nginx
 service), and the licensed fonts in `frontend/src/assets/fonts/` (needed at
 **build** time by `next/font/local`, so `docker compose build frontend` fails
-without them). Both are gitignored deliberately.
+without them). Both are gitignored deliberately. The fonts live in the private repo
+`bframos8/put-you-on-fonts`; CI and new machines copy them in from there (see
+[claude-mds/set_up_new_machine.md](claude-mds/set_up_new_machine.md)).
 
 ## Configuration
 
@@ -52,7 +54,8 @@ frontend `.dockerignore` excludes `.env*` so there is only one source of truth.
 
 `cd backend && pytest` and `cd data_pipeline && pytest`. Both run on the host
 against a venv; `backend/.dockerignore` deliberately keeps the test suite out of
-the runtime image.
+the runtime image. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the
+backend suite inside the built image instead, with the tests mounted back in.
 
 ## Working preferences
 
