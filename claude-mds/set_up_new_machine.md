@@ -49,6 +49,14 @@ verification.
       docker run --rm -it postgres:16 psql -h <rds-endpoint> -U ramos -d pyo_db -W
       ```
 
+- [ ] **Terraform** (≥ 1.10, for S3 lock files). Homebrew's core formula is stuck at
+      1.5, so use HashiCorp's tap, then initialize against the shared S3 state:
+
+      ```bash
+      brew install hashicorp/tap/terraform
+      cd infra && terraform init && terraform plan   # expect "No changes"
+      ```
+
 - [ ] **Porkbun login**, for the DNS `A` record in 6.4.
 
 ---
@@ -142,11 +150,13 @@ Verified against Python 3.11 and Node 20 (the version in the frontend image).
 
 Things that do not travel through git, and how to keep them from biting.
 
-**The gameplan checkboxes are the infrastructure state file.** There is no Terraform
-here, so [deployment-gameplan.md](deployment-gameplan.md) is the only record of what
-exists in AWS. Phase 6 is the first phase that creates real, billable resources.
-Commit and push the checkbox *and* its note immediately after each item — otherwise
-the other machine believes 6.1 is unstarted and you launch a second instance.
+**Terraform state is the record of what exists** for everything in
+[infra/](../infra/) (gameplan 6.0). It lives in S3, not in git, so both machines see
+the same state, and a `terraform plan` on a machine with a stale checkout shows the
+instance already exists instead of creating a second one. Always `git pull` before
+`terraform plan`, and never change a Terraform-managed resource in the console. The
+gameplan checkboxes still record everything done by hand (Phase 0 IAM/ECR, SSM values,
+DNS), so keep committing those notes promptly.
 
 **`deploy/prod.env` is gitignored and will not sync.** After seeding, SSM is the
 source of truth. Do not maintain two copies; pull from SSM if you need the values

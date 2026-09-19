@@ -140,6 +140,10 @@ is the last thing you wire because it automates a process you've already proven 
 >   SecureString KMS key ARN once the key is chosen.
 > - **Phase 6.1:** scope `ssm:SendCommand` in `putyouon-cicd-deploy-permissions` from
 >   `instance/*` to the specific instance ARN once the instance exists.
+>   *(Revised 2026-09-18: scope it with a condition on the tag instead,
+>   `ssm:resourceTag/Project = putyouon`, which Terraform's `default_tags` puts on the
+>   instance. A fixed instance ARN breaks CI deploys the first time the instance is
+>   deliberately replaced, e.g. for a new AMI.)*
 >
 > Concepts behind every Phase 0 decision are written up in
 > [deployment-learnings.md](deployment-learnings.md).
@@ -740,7 +744,96 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 6 — Provision & bootstrap the EC2 instance
 
-- [ ] **6.1 Launch the instance.**
+> **Revised 2026-09-18 — read before any item below.** Three things changed since this
+> phase was written:
+> - **Terraform now owns Phase 6's resources** (6.0). The "gameplan checkboxes are the
+>   infrastructure state file" rule in [set_up_new_machine.md](set_up_new_machine.md) no
+>   longer applies to anything Terraform manages: remote state is the record, and
+>   `terraform plan` from either machine shows what exists.
+> - **The RDS instance no longer exists.** `put-you-on-instance-2` was deleted on
+>   2026-09-08 with a final snapshot
+>   (`final-put-you-on-instance-2e36d4fe0-ae3a-457a-9e19-36cd188f6067`: Postgres 16.13,
+>   30 GB gp3, encrypted). The "already provisioned / live" wording in the locked
+>   decisions, the old 6.5 text and 10.1 is stale. Decision: **restore the snapshot to a new RDS
+>   instance, managed by Terraform** (6.5). The SSM `POSTGRES_HOST` seeded in A.2 still
+>   names the deleted endpoint and must be updated to the new one.
+> - **Sized down.** `t3.small` (2 GB) and a 12 GB root volume instead of `t3.medium` and
+>   ≥30 GB (6.1). Both can grow later without rebuilding.
+>
+> The old instance's public IP (`32.196.93.110`) is still listed as an Elastic IP
+> attached to the deleted database's leftover network interface. It is
+> **service-managed by RDS** (`ServiceManaged: rds`), so the account can't move or
+> release it; it should disappear on its own. If it is still there after 6.5, open an
+> AWS support case, since public IPv4 addresses are billed.
+
+- [x] **6.0 Terraform foundation (remote state in S3).**
+  > **Landed 2026-09-18.** State bucket `putyouon-tfstate-b43f7b3a` (versioned,
+  > SSE-S3, public access blocked), key `prod/terraform.tfstate`, S3 lock files.
+  > Terraform 1.16.3, AWS provider 6.65.0. The lock file pins provider hashes for
+  > darwin_arm64, darwin_amd64 and linux_amd64. **Gotcha hit on the first apply:** the
+  > post-apply plan wanted to *replace* the database because `storage_encrypted` was
+  > inherited from the snapshot but not declared (`true -> null # forces
+  > replacement`). `prevent_destroy` turned that into a plan error instead of a
+  > deletion. Declaring `storage_encrypted = true` fixed it, and the plan now reads "No
+  > changes". Re-run `terraform plan` after every apply to catch this kind of thing.
+  **How:**
+  - **State bucket, created once by hand** (Terraform can't store its state in a bucket
+    it hasn't created yet): a private S3 bucket in `us-east-1` with versioning on (so a
+    bad state can be rolled back), default encryption, and all public access blocked.
+    The name has a random suffix, not the account ID, because it is committed in the
+    backend block of a public repo.
+  - **Locking with S3 lock files** (`use_lockfile = true`, Terraform ≥ 1.10). No
+    DynamoDB table.
+  - **Code in [infra/](../infra/)**, one root module, no modules or workspaces (one
+    environment). Commit `.terraform.lock.hcl` (pins provider versions for both
+    machines); ignore `.terraform/` and any local `*.tfstate*`.
+  - **What Terraform manages:** everything new in Phase 6 (instance, security groups,
+    Elastic IP, RDS restored from the snapshot).
+  - **What it only reads**, via data sources, never changes: the Phase 0 instance
+    profile, the default VPC and subnet, the AL2023 AMI ID.
+  - **What stays out of Terraform:** SSM parameter values (SecureStrings would sit in
+    state in plain text, and `ssm-seed.sh` already owns them), the Porkbun `A` record,
+    the Phase 0 IAM/OIDC/ECR resources (importable later with `import` blocks).
+  - Plan and apply run from a dev machine. CI does not run Terraform yet.
+  **Why:** Phase 6 is the first phase that creates billable resources that keep
+  changing, and it is picked up from two machines. Remote state with locking means
+  neither machine can create a second instance from a stale checkout, and every change
+  is a reviewable diff instead of console clicks. The concepts carry over to the
+  Hetzner move (the `hcloud` provider; `terraform init -migrate-state` moves state).
+  **Rules:** read every plan before applying, especially `destroy` and `-/+`
+  (replace) lines. Once a resource is in Terraform, change it only through Terraform.
+
+- [x] **6.1 Launch the instance.**
+  > **Landed 2026-09-18.** `i-073a4c379aed53c50` (`putyouon-app`), t3.small, us-east-1a.
+  > At idle: 1.5 of 1.9 GB RAM available, 4.1 of 12 GB disk used (2 GB of that is the
+  > swap file). The `mem_limit` and `prune -af` follow-ups below are still open.
+  > **Revised 2026-09-18:** `t3.small` (2 GB), 12 GB gp3 root, AZ `us-east-1a` (same
+  > AZ as RDS in 6.5, so app-to-DB traffic isn't billed as cross-AZ). Other settings:
+  > - **AMI:** latest AL2023 x86_64 from its public SSM parameter, with
+  >   `ignore_changes = [ami]`, so a new AMI release doesn't make Terraform replace the
+  >   running instance.
+  > - **Metadata:** IMDSv2 required, with a hop limit of 1 so containers can't reach
+  >   the instance role's credentials.
+  > - **CPU credits:** `standard`, so a sustained CPU burst throttles instead of adding
+  >   a surprise "unlimited" bill.
+  > - **Swap:** a 2 GB swap file.
+  >
+  > Disk budget: AL2023 plus Docker is about 2 GB. The images are about 1.9 GB
+  > (backend 1.64 GB, frontend 0.2 GB, nginx 0.06 GB), about 3.8 GB at peak while a
+  > deploy briefly holds two versions. Add 2 GB of swap, about 0.5 GB of logs, and about
+  > 0.5 GB for the one-off `postgres:16` (6.5) and `certbot` (Phase 7) images, and the
+  > peak is about 9 GB, which leaves roughly 25% headroom. gp3 grows online (modify
+  > the volume, then `growpart` and `xfs_growfs`), so starting small is cheap to undo.
+  >
+  > **Two consequences to handle before the first deploy:**
+  > - The backend's `mem_limit: 2g` in
+  >   [docker-compose.prod.yaml](../docker-compose.prod.yaml) (3.4) equals all the RAM
+  >   on this host, so it no longer protects anything. Measure the backend under a
+  >   couple of concurrent ingests on the box, then set the cap below host RAM (likely
+  >   ~1.2 GB).
+  > - 8.3's `docker image prune -f` removes only *dangling* images. SHA-tagged old
+  >   images are not dangling, so they would pile up until the 12 GB disk fills. Use
+  >   `docker image prune -af` there, which removes every image no container uses.
   **How:** Amazon Linux 2023 (SSM agent preinstalled) or Ubuntu 22.04, **x86_64** (kernel-6.1
   default AMI), start at **t3.medium (4 GB RAM)** and right-size from metrics — `t3.small`
   (2 GB) is worth testing (see Why). Attach the **instance IAM role** from 0.4. Use a gp3 EBS
@@ -755,20 +848,51 @@ is the last thing you wire because it automates a process you've already proven 
   container under a couple of concurrent ingests before trusting `t3.small`. The IAM role is
   what enables image/secret pulls and SSM access without keys.
 
-- [ ] **6.2 Lock down the security group.**
+- [x] **6.2 Lock down the security group.**
+  > **Landed 2026-09-18.** `putyouon-app` (80/443 in) and `putyouon-db` (5432 from
+  > `putyouon-app` only). The SSM agent is online, so shell access works without SSH.
+  > **Revised 2026-09-18:** two Terraform-managed groups.
+  > - **`putyouon-app`** (instance): inbound 80 and 443 from `0.0.0.0/0`, IPv4 only, no
+  >   22; all outbound, which the SSM agent, ECR pulls and Let's Encrypt need.
+  > - **`putyouon-db`** (RDS): inbound 5432 **only from `putyouon-app`**, by
+  >   security-group reference rather than IP.
+  >
+  > The restored database is **not publicly accessible** (the deleted one was), so the
+  > only path to it is through the instance. From a laptop, reach it with an SSM
+  > port-forwarding session through the instance.
   **How:** Inbound **80 + 443 from 0.0.0.0/0** only. **No port 22** — use **SSM Session
   Manager** for shell access. Ensure the **RDS security group allows 5432 from this
   instance's SG**.
   **Why:** Closing SSH removes the most-attacked port entirely; SSM gives audited,
   key-less shell access. The RDS rule is what lets the app reach the database.
 
-- [ ] **6.3 Install Docker Engine + Compose plugin; enable on boot.**
+- [x] **6.3 Install Docker Engine + Compose plugin; enable on boot.**
+  > **Landed 2026-09-18.** Checked over SSM Run Command: cloud-init `done`, Docker
+  > 25.0.14 enabled, Compose v5.5.1, 2 GB swap active, `/var/www/certbot` present, and
+  > IMDS returns 401 without a token (IMDSv2 enforced).
+  > **Revised 2026-09-18:** done at first boot by the instance's `user_data` (in
+  > [infra/](../infra/)), not by hand.
+  > - **Docker:** `dnf install docker`, enabled on boot.
+  > - **Compose plugin:** AL2023's repos don't ship `docker-compose-plugin`, so it is
+  >   downloaded from Docker's GitHub release, pinned to a version, and checked against
+  >   the published SHA-256.
+  > - **Also:** creates the swap file from 6.1 and the `/var/www/certbot` webroot
+  >   (Phase 7).
+  >
+  > Deploys run as root through SSM Run Command, so there's no deploy user to add to the
+  > `docker` group.
   **How:** Install `docker` and `docker-compose-plugin`, `systemctl enable --now docker`,
   add the deploy user to the `docker` group.
   **Why:** Compose runs your stack; enabling on boot means an instance reboot brings the app
   back automatically (with the `restart` policies from 3.3).
 
-- [ ] **6.4 Allocate an Elastic IP and point DNS at it.**
+- [x] **6.4 Allocate an Elastic IP and point DNS at it.**
+  > **Landed 2026-09-18.** Elastic IP `54.161.87.227` (Terraform output `elastic_ip`).
+  > The Porkbun `A` record `putyouon.app -> 54.161.87.227` was added by hand, with no
+  > `AAAA`. It resolves on 1.1.1.1 and 8.8.8.8, and the AAAA lookup is empty, so
+  > Phase 7 can run Certbot.
+  > **Revised 2026-09-18:** Terraform allocates and associates the Elastic IP and prints
+  > it as an output. The Porkbun `A` record stays manual.
   **How:** Allocate + associate an Elastic IP; in **Porkbun's DNS panel** create an `A`
   record `putyouon.app → EIP` (add `www` as a second `A`/`CNAME` if you want it). Create
   **only** the `A` record — do **not** add an `AAAA`/IPv6 record: the box is IPv4-only, and
@@ -778,7 +902,50 @@ is the last thing you wire because it automates a process you've already proven 
   stop/start and would break TLS and redirects. Certbot's HTTP-01 challenge (Phase 7)
   needs the `A` record already resolving to the EIP.
 
-- [ ] **6.5 Verify RDS state.**
+- [x] **6.5 Restore RDS from the final snapshot, then verify it.**
+  > **Landed 2026-09-18.** `putyouon-db`
+  > (`putyouon-db.calaeskuuhry.us-east-1.rds.amazonaws.com`), restored in 8m22s. SSM
+  > `POSTGRES_HOST` updated (version 2). Verified from the instance with the SSM
+  > credentials over TLS:
+  > - login works as `ramos` (the snapshot's password matches SSM)
+  > - `vector` 0.8.1 is installed
+  > - `alembic_version = b8c9d0e1f2a3`, as 10.1 expects
+  > - 110,861 songs, all with embeddings; 2 users
+  > - no HNSW index yet (10.2)
+  >
+  > **For 10.1:** the live unique constraint is named `songs_album_id_title_key`, while
+  > 1.2's models declare `uq_songs_album_id_title`, so expect autogenerate to flag the
+  > name after the stamp. The old public IP `32.196.93.110` was still present
+  > afterwards.
+  > **Revised 2026-09-18:** the database was deleted on 2026-09-08 (see the Phase 6 note),
+  > so this item is now **restore, then verify**.
+  > - **Restore:** Terraform creates `aws_db_instance` from the final snapshot as
+  >   `db.t4g.micro` in `us-east-1a`, in the default DB subnet group, behind
+  >   `putyouon-db`, not publicly accessible. The snapshot's 30 GB gp3 is the floor;
+  >   storage can't shrink on restore. It keeps the snapshot's master user, password and
+  >   KMS key.
+  > - **Protection:** 7-day automated backups, `deletion_protection`, a final snapshot
+  >   on delete, and `prevent_destroy`. Removing the block by mistake fails the plan
+  >   instead of deleting the data.
+  > - **Then:** update SSM `/putyouon/prod/POSTGRES_HOST` to the new endpoint (Terraform
+  >   output) with `aws ssm put-parameter --overwrite`. The gitignored
+  >   `deploy/prod.env` copy is then stale; SSM is the source of truth (A.2).
+  > - **Sizing caveat:** `db.t4g.micro` has 1 GB of RAM. `songs.embedding` is
+  >   `Vector(1280)`, about 560 MB raw for ~110k rows, so it can't stay cached. kNN
+  >   seq scans read from disk until the HNSW index exists (10.2), and even then the
+  >   index may not fit. If recommendation latency is bad, move to `db.t4g.small`
+  >   (2 GB); it's an in-place modify with a few minutes of downtime.
+  > - **CPU credits:** RDS T-class instances always run in *unlimited* mode (unlike
+  >   the EC2 `standard` setting in 6.1, it can't be turned off). Sustained seq scans
+  >   add surplus-credit charges on top of the latency. 9.2 should alarm on
+  >   `CPUCreditBalance` / `CPUSurplusCreditsCharged`.
+  > - **Credentials:** a restore keeps the snapshot's master user (`ramos`) and
+  >   password. Test a login from the instance before relying on SSM's
+  >   `POSTGRES_USER`/`POSTGRES_PASSWORD`. If it fails, reset the password through
+  >   Terraform (`password_wo`, an in-place modify), not the console.
+  > - **Verification** below is unchanged, but it runs **from the instance** (SSM
+  >   shell, `docker run --rm -it postgres:16 psql …`), since the DB has no public
+  >   address.
   **How:** The database is already live (`pyo_db`: migrations applied, ~110k rows, genre
   backfill done — see
   [backend-optimization-remaining.md](../backend/agents/backend-optimization-remaining.md)),
@@ -794,6 +961,10 @@ is the last thing you wire because it automates a process you've already proven 
 ## Phase 7 — First TLS certificate + auto-renewal
 
 - [ ] **7.1 Issue the initial certificate.**
+  > **Note 2026-09-18:** AL2023 has no `certbot` package and no EPEL. Run Certbot as the
+  > `certbot/certbot` container, with `/etc/letsencrypt` and `/var/www/certbot` mounted
+  > (the webroot already exists from 6.3), and do 7.2's renewal as a systemd timer
+  > running that container.
   **How:** With DNS resolving (6.4) and nginx serving the ACME challenge on port 80, run
   Certbot (webroot mode against `/var/www/certbot`, or the standalone/nginx plugin) to issue
   a cert for `putyouon.app`. **Note — `.app` is HSTS-preloaded at the TLD level:** browsers
@@ -865,6 +1036,14 @@ is the last thing you wire because it automates a process you've already proven 
   (re-point to the previous SHA). OIDC means no AWS keys in GitHub.
 
 - [ ] **8.3 Deploy workflow — `ssm:SendCommand` to the instance.**
+  > **Gap found 2026-09-18:** nothing puts the repo's runtime files on the instance.
+  > The box needs `docker-compose.prod.yaml`, `nginx/nginx.prod.conf` (bind-mounted by
+  > compose) and `deploy/materialize-env.sh` (which writes the env files next to the
+  > compose file). `git` isn't on the AL2023 AMI either. Pick a fixed directory (e.g.
+  > `/opt/putyouon`) and have the deploy script refresh those files there as step 0,
+  > either with `dnf install git` + a clone/pull of the public repo at the deployed SHA,
+  > or by copying them from S3. 10.1's stamp runs from the same directory. Also use
+  > `docker image prune -af` in step 7 (see 6.1).
   **How:** Send a shell script via `AWS-RunShellScript` that, on the instance:
   1. materializes secrets from SSM (5.2),
   2. `aws ecr get-login-password | docker login …`,
@@ -938,6 +1117,12 @@ is the last thing you wire because it automates a process you've already proven 
   `b8c9d0e1f2a3` missing from the chain and error (a safe, loud failure — not data loss).
 
 - [ ] **10.2 Finish P5b — rebuild the HNSW index (launch gate).**
+  > **Note 2026-09-18:** the RDS instance is now Terraform-managed (6.5), so do the
+  > scale-up and scale-down by changing `instance_class` in
+  > [infra/rds.tf](../infra/rds.tf) and applying. Resizing in the console would drift
+  > from Terraform. The DB is also private now, so run the hour-long index build from
+  > an SSM shell on the instance under `tmux` or `nohup`, not through an SSM
+  > port-forward from a laptop (those drop on idle).
   **How:** Run the Path A runbook in
   [backend-optimization-remaining.md](../backend/agents/backend-optimization-remaining.md):
   scale RDS up, `CREATE INDEX … USING hnsw`, pass the EXPLAIN gate, scale back down, then

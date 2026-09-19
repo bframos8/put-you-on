@@ -122,3 +122,10 @@ frontend/agent-handoffs-FE
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .tmp_claude/
+# Terraform (infra/): providers and any local state stay out; state lives in S3
+# (gameplan 6.0). .terraform.lock.hcl IS committed so both machines pin the same
+# provider versions.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
