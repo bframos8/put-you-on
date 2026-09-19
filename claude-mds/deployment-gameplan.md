@@ -707,7 +707,14 @@ is the last thing you wire because it automates a process you've already proven 
   is gitignored and will not sync between machines; after seeding, **SSM is the source of
   truth** — pull from it rather than keeping a second copy.
 
-- [ ] **A.3 CI workflow — test on every PR and push.** *(Pulled forward from 8.1.)*
+- [x] **A.3 CI workflow — test on every PR and push.** *(Pulled forward from 8.1.)*
+  > **Landed 2026-09-18 (PR #11).** [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+  > runs `backend` (image build with GHA layer cache, pytest inside it as `app`) and
+  > `frontend` (fonts from the private fonts repo, Node 20, lint, build) on every PR and
+  > push to `main`. First run green on the PR: backend 2m23s (cold cache), frontend 35s.
+  > Two corrections to the spec, both recorded below: the 8.1 test command (bare
+  > `pytest` is off PATH for `app`), and the font claim in this item's Why. **Left for
+  > 8.4:** make `backend` and `frontend` required checks on `main`.
   **How:** Exactly as specified in 8.1 below — build the backend image and run pytest
   inside it with the test files mounted back in, plus `npm ci` / `npm run lint` /
   `npm run build` for the frontend. No AWS involvement, so this has no dependency on
