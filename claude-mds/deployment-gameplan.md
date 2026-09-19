@@ -687,7 +687,12 @@ is the last thing you wire because it automates a process you've already proven 
   `docker compose build frontend` at all; that is invisible until the first frontend
   build.
 
-- [ ] **A.2 Seed the SSM parameters. (Blocks Phase 6.)**
+- [x] **A.2 Seed the SSM parameters. (Blocks Phase 6.)**
+  > **Done 2026-09-18.** Seeded from a new machine using CLI credentials for an IAM user,
+  > not a root access key, in `us-east-1`. `SENTRY_DSN` was left blank on purpose: the seed
+  > script skips empty values, so no parameter exists and
+  > [main.py](../backend/app/main.py) skips Sentry init. To turn Sentry on later, fill it in
+  > `deploy/prod.env`, re-run the seed, and redeploy.
   **How:** `cp deploy/prod.env.example deploy/prod.env`, fill in real production values,
   then `./deploy/ssm-seed.sh`. Verify with
   `aws ssm get-parameters-by-path --path /putyouon/prod --query 'Parameters[].Name'`.
@@ -702,19 +707,34 @@ is the last thing you wire because it automates a process you've already proven 
   is gitignored and will not sync between machines; after seeding, **SSM is the source of
   truth** — pull from it rather than keeping a second copy.
 
-- [ ] **A.3 CI workflow — test on every PR and push.** *(Pulled forward from 8.1.)*
+- [x] **A.3 CI workflow — test on every PR and push.** *(Pulled forward from 8.1.)*
+  > **Landed 2026-09-18 (PR #11).** [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+  > runs `backend` (image build with GHA layer cache, pytest inside it as `app`) and
+  > `frontend` (fonts from the private fonts repo, Node 20, lint, build) on every PR and
+  > push to `main`. First run green on the PR: backend 2m23s (cold cache), frontend 35s.
+  > Two corrections to the spec, both recorded below: the 8.1 test command (bare
+  > `pytest` is off PATH for `app`), and the font claim in this item's Why. **Left for
+  > 8.4:** make `backend` and `frontend` required checks on `main`.
   **How:** Exactly as specified in 8.1 below — build the backend image and run pytest
   inside it with the test files mounted back in, plus `npm ci` / `npm run lint` /
   `npm run build` for the frontend. No AWS involvement, so this has no dependency on
   Phase 6 or 7.
+  **Fonts:** the runner's checkout has no licensed fonts (gitignored, and this repo is
+  public), so `npm run build` would fail on every run. They live in the private repo
+  `bframos8/put-you-on-fonts`; CI checks it out with a read-only deploy key (Actions
+  secret `FONTS_DEPLOY_KEY`) and copies the files into `frontend/src/assets/fonts/`.
+  Chosen over a private S3 bucket + OIDC role (keeps this item AWS-free and portable to
+  the Hetzner move) and over an encrypted archive in this repo (would sit in public
+  history for good). The stakes of a long-lived deploy key are low: the deployed site
+  serves these same files to every visitor; the constraint is not redistributing them.
   **Why:** The original 8.1 rationale (test environment equals production) still holds,
   but there is now a second reason to do it *before* Phase 6 rather than after: with two
-  machines able to push, "works on mine" is no longer verifiable by either one. The
-  frontend is where they will drift first — machine 2 needs hand-copied fonts to build
-  at all — and a PR check that runs `npm run build` catches a missing or partial font
-  copy immediately instead of at deploy time. It also removes the host venv from the
-  backend test path, since the same containerized command runs identically on both
-  machines.
+  machines able to push, "works on mine" is no longer verifiable by either one. CI builds
+  from GitHub plus the fonts repo, never from either machine's disk, so it can't catch
+  a missing font copy on one machine. What it does is give both machines one font
+  source (the fonts repo), so drift can't happen in the first place. It also removes
+  the host venv from the backend test path, since the same containerized command runs
+  identically on both machines.
 
 ---
 
@@ -818,9 +838,15 @@ is the last thing you wire because it automates a process you've already proven 
     lives in [test-requirements.txt](../backend/test-requirements.txt), not the image):
     `docker run -v ./backend/tests:/app/tests -v ./backend/pytest.ini:/app/pytest.ini -v
     ./backend/test-requirements.txt:/app/test-requirements.txt <image> sh -c "pip install
-    -r test-requirements.txt && pytest"`. No extra env wiring needed —
-    [conftest.py](../backend/tests/conftest.py) injects all required env vars. Cache pip
-    layers.
+    -r test-requirements.txt && python -m pytest -p no:cacheprovider"`. No extra env
+    wiring needed — [conftest.py](../backend/tests/conftest.py) injects all required env
+    vars. Cache pip layers.
+    *(Corrected 2026-09-18: the original ended in a bare `pytest`, which fails with
+    `pytest: not found`. The image runs as the non-root `app` user (2.2), so pip falls
+    back to a user install and the `pytest` script lands in `~/.local/bin`, off PATH.
+    `python -m pytest` imports the module instead. Running as `app` rather than
+    `--user root` keeps the tests on the production user; `-p no:cacheprovider` only
+    silences a warning about the root-owned `/app`. Verified: 146 passed.)*
   - **Frontend:** `npm ci`, `npm run lint`, `npm run build`.
   **Why:** Testing inside the built image means the test environment equals production — no
   "works in CI, breaks in the image" gaps, and it validates the image as a side effect.
@@ -832,7 +858,9 @@ is the last thing you wire because it automates a process you've already proven 
   **How:** Authenticate to AWS via **OIDC** (role from 0.5), `docker login` to ECR, build
   **backend** and **frontend** (the latter with
   `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`), tag with both the **git SHA** and
-  `latest`, and push to ECR.
+  `latest`, and push to ECR. The frontend build needs the licensed fonts: fetch them
+  exactly as the CI workflow does (checkout of `bframos8/put-you-on-fonts` with
+  `FONTS_DEPLOY_KEY`, see A.3) before `docker build`, or the image build fails.
   **Why:** Immutable SHA tags make every deploy traceable and **instantly rollback-able**
   (re-point to the previous SHA). OIDC means no AWS keys in GitHub.
 

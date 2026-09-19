@@ -14,9 +14,6 @@ skip to [AWS / deployment work](#aws--deployment-work) if that is all you need.
 
 - [ ] **Push everything.** Check for unpushed commits (`git log --branches --not
       --remotes --oneline`) and branches with no upstream (`git status -sb`).
-- [ ] **Copy the fonts out of band.** `frontend/src/assets/fonts/` — 8 files, ~2.8 MB
-      (everything except `SmileySans-Oblique.woff2`, which is tracked). AirDrop, a USB
-      stick, or a cloud folder. See [Fonts](#1-fonts-required--the-build-fails-without-them).
 - [ ] **Note the Spotify client ID and secret**, or just plan to re-read them from the
       Spotify developer dashboard.
 
@@ -63,22 +60,23 @@ Needed to actually run or change the app. Independent of the AWS list above.
 ### 1. Fonts (required — the build fails without them)
 
 `frontend/src/assets/fonts/` is gitignored. [layout.tsx](../frontend/src/app/layout.tsx)
-loads nine files through `next/font/local`, which resolves them **at build time**, so
+loads seven files through `next/font/local`, which resolves them **at build time**, so
 both `npm run build` and `docker compose build frontend` fail on a fresh clone. Docker
 does not rescue you here: the frontend Dockerfile does `COPY . .` then `npm run build`,
 and `frontend/.dockerignore` does not exclude fonts. They are a build input, not a
 runtime dependency.
 
-Copy the directory by hand. Only `SmileySans-Oblique.woff2` is in the repo; the
-Helvetica and Estrella files are commercially licensed and must not be committed to a
-public repo.
+Only `SmileySans-Oblique.woff2` is in this repo; the Helvetica and Estrella files are
+commercially licensed and must not be committed to a public repo. They live in the
+private repo `bframos8/put-you-on-fonts` (8 files, ~1.7 MB), the same source CI uses.
+Clone it next to this repo and copy them in:
 
+```bash
+git clone https://github.com/bframos8/put-you-on-fonts.git ../put-you-on-fonts
+cp ../put-you-on-fonts/*.ttf ../put-you-on-fonts/*.otf frontend/src/assets/fonts/
 ```
-Estrella.otf                          Helvetica-Oblique.ttf
-Helvetica.ttf                         helvetica-compressed-5871d14b6903a.otf
-Helvetica-Bold.ttf                    helvetica-light-587ebe5a59211.ttf
-Helvetica-BoldOblique.ttf             helvetica-rounded-bold-5871d05ead8de.otf
-```
+
+Later font changes: `git -C ../put-you-on-fonts pull` and copy again.
 
 ### 2. TLS certificates
 
@@ -119,9 +117,15 @@ Three things are not containerized and still need host setup:
 - **The data pipeline** has no Dockerfile. It runs on the host from
   `data_pipeline/pipeline_requirements.txt`, driven by `setup_cron.sh`.
 - **Tests.** `backend/.dockerignore` excludes `tests/` and `test-requirements.txt`
-  from the image, so pytest runs on the host. *(Once gameplan 8.1 lands you can run
-  the suite the way CI does — in the built image with the test files mounted back in —
-  and skip the backend venv.)*
+  from the image, so pytest runs on the host. Or run the suite the way CI does, in
+  the built image with the test files mounted back in, and skip the backend venv
+  (from the repo root, after `docker compose build backend`):
+
+  ```bash
+  docker run --rm -v ./backend/tests:/app/tests -v ./backend/pytest.ini:/app/pytest.ini \
+    -v ./backend/test-requirements.txt:/app/test-requirements.txt put-you-on-backend \
+    sh -c "pip install -r test-requirements.txt && python -m pytest -p no:cacheprovider"
+  ```
 - **Alembic**, when running migrations from the host rather than exec'ing into the
   container.
 
@@ -152,5 +156,6 @@ elsewhere.
 diverge immediately and permanently. Expected — just don't expect local data to follow
 you.
 
-**Fonts and mkcert certs are per-machine.** Certs *should* be (private keys). Fonts
-are a one-time copy you will forget about until a frontend build fails.
+**mkcert certs are per-machine**, and should be (private keys). Fonts are not: both
+machines and CI copy them from `bframos8/put-you-on-fonts`, so a font change goes
+there first.
