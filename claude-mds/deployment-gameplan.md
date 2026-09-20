@@ -960,11 +960,27 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 7 — First TLS certificate + auto-renewal
 
-- [ ] **7.1 Issue the initial certificate.**
-  > **Note 2026-09-18:** AL2023 has no `certbot` package and no EPEL. Run Certbot as the
-  > `certbot/certbot` container, with `/etc/letsencrypt` and `/var/www/certbot` mounted
-  > (the webroot already exists from 6.3), and do 7.2's renewal as a systemd timer
-  > running that container.
+- [x] **7.1 Issue the initial certificate.**
+  > **Landed 2026-09-19.** Certificate for **`putyouon.app`** (apex only, per 4.1):
+  > ECDSA, serial `6c3e…f6f`, expires **2026-12-19**, at the
+  > `/etc/letsencrypt/live/putyouon.app/` paths
+  > [nginx.prod.conf](../nginx/nginx.prod.conf) already points at. Registered to
+  > `bframoslopez@gmail.com`, so Let's Encrypt emails a warning if renewal ever breaks.
+  >
+  > AL2023 has no `certbot` package and no EPEL, so Certbot runs as the
+  > `certbot/certbot` container with `/etc/letsencrypt`, `/var/lib/letsencrypt`,
+  > `/var/log/letsencrypt` and `/var/www/certbot` mounted.
+  >
+  > **Bootstrap without the app stack:** ECR is still empty (8.2), so the compose stack
+  > can't serve the challenge. A throwaway `nginx:alpine` container published :80 with
+  > the webroot mounted, and was removed afterwards. That kept Phase 7 independent of
+  > the 8.3 "get the repo files onto the box" gap.
+  >
+  > **Webroot, not standalone**, deliberately: Certbot records the authenticator in
+  > `renewal/putyouon.app.conf` and repeats it at renewal. Standalone would need :80
+  > free, which it won't be once nginx runs. Verified in order: probe file fetched over
+  > the public internet, then a staging `--dry-run` (rate limits: 5 failures per
+  > identifier per hour), then the real issue.
   **How:** With DNS resolving (6.4) and nginx serving the ACME challenge on port 80, run
   Certbot (webroot mode against `/var/www/certbot`, or the standalone/nginx plugin) to issue
   a cert for `putyouon.app`. **Note — `.app` is HSTS-preloaded at the TLD level:** browsers
@@ -977,9 +993,34 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** This is the bootstrap that turns on HTTPS; everything downstream assumes a valid
   cert at `/etc/letsencrypt/live/putyouon.app/`.
 
-- [ ] **7.2 Automate renewal + nginx reload.**
-  **How:** A systemd timer (or cron) running `certbot renew` twice daily, with a deploy hook
-  that reloads nginx (`docker compose exec nginx nginx -s reload`).
+- [x] **7.2 Automate renewal + nginx reload.**
+  > **Landed 2026-09-19.** `certbot-renew.timer` (enabled) runs `certbot-renew.service`
+  > at 03:00 and 15:00 with up to an hour of jitter, `Persistent=true`. Definitions live
+  > in [infra/user-data.sh](../infra/user-data.sh), so a rebuilt instance gets them; they
+  > were installed on the running box by hand, since `ignore_changes = [user_data]`
+  > means edits don't re-run on an existing instance.
+  >
+  > **Three deviations from the How below, each deliberate:**
+  > - **`docker kill -s HUP` on the container, not `docker compose exec`.** The compose
+  >   version needs the compose file's directory and its `BACKEND_IMAGE` variables, which
+  >   a timer doesn't have (and 8.3 hasn't put on the box). The script finds nginx by its
+  >   `com.docker.compose.service=nginx` label and no-ops when nothing is running.
+  > - **A script, not an inline `ExecStartPost`.** systemd doesn't run Exec lines through
+  >   a shell and would try to expand the `$`.
+  > - **Not certbot's `--deploy-hook`**, which runs inside the certbot container and has
+  >   no docker CLI or socket.
+  >
+  > **Verified:** `renew --dry-run` returned "Simulating renewal … (success)", which is
+  > the real webroot path rather than a skipped no-op; `systemctl start
+  > certbot-renew.service` finished with `Result=success`.
+  >
+  > **Two risks to watch:**
+  > - **Nothing listens on :80 until the first deploy.** Renewal starts attempting at
+  >   ~day 60 (2026-11-19) and will fail quietly against a closed port. Either deploy
+  >   (Phase 8) before then, or add an expiry check in 9.2.
+  > - **The certificate exists only on this instance's EBS volume.** Replacing the
+  >   instance loses `/etc/letsencrypt`, and reissuing is capped at 5 per week for the
+  >   same name. 10.4 should say: re-run 7.1's bootstrap after any instance rebuild.
   **Why:** Let's Encrypt certs last 90 days. Unattended renewal is the difference between
   "set and forget" and a site-down incident every quarter.
 
@@ -1139,7 +1180,11 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [ ] **10.4 Document the rollback procedure.**
   **How:** Write down: re-run the Deploy workflow pinned to the previous image SHA; if a
-  migration was destructive, restore from the RDS snapshot taken pre-deploy.
+  migration was destructive, restore from the RDS snapshot taken pre-deploy. Also cover
+  **instance rebuild**: `/etc/letsencrypt` lives only on the instance's EBS volume, so a
+  replaced instance has no certificate. Re-run 7.1's bootstrap (throwaway nginx on :80,
+  `certbot certonly --webroot`) before bringing the stack up, and remember reissuing is
+  capped at 5 per week for the same name.
   **Why:** Brief downtime is acceptable, but an *unrecoverable* deploy is not. A one-page
   runbook turns a 2 a.m. incident into a checklist.
 
