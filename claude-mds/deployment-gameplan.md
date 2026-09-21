@@ -830,7 +830,8 @@ is the last thing you wire because it automates a process you've already proven 
   >   [docker-compose.prod.yaml](../docker-compose.prod.yaml) (3.4) equals all the RAM
   >   on this host, so it no longer protects anything. Measure the backend under a
   >   couple of concurrent ingests on the box, then set the cap below host RAM (likely
-  >   ~1.2 GB).
+  >   ~1.2 GB). *(Set to `1200m` on 2026-09-20 ahead of the first deploy; still worth
+  >   confirming with `docker stats` once the stack is up.)*
   > - 8.3's `docker image prune -f` removes only *dangling* images. SHA-tagged old
   >   images are not dangling, so they would pile up until the 12 GB disk fills. Use
   >   `docker image prune -af` there, which removes every image no container uses.
@@ -1066,7 +1067,14 @@ is the last thing you wire because it automates a process you've already proven 
   already has it. `npm run build` catches type/build breaks that lint misses. *(The
   `data_pipeline` suite is out of scope this pass but can be added later as a separate job.)*
 
-- [ ] **8.2 Build & Push workflow — on merge to `main`.**
+- [x] **8.2 Build & Push workflow — on merge to `main`.**
+  > **Landed 2026-09-20** as the `build` job of
+  > [.github/workflows/deploy.yml](../.github/workflows/deploy.yml). OIDC into the 0.5
+  > role, ECR login, both images pushed with the git SHA and `latest`, fonts from the
+  > private repo (A.3), GHA layer cache on its own scopes so it doesn't race ci.yml's
+  > backend build. The registry host comes from the ECR login output and the role ARN
+  > from the `AWS_DEPLOY_ROLE_ARN` secret, so the AWS account id stays out of this
+  > public repo.
   **How:** Authenticate to AWS via **OIDC** (role from 0.5), `docker login` to ECR, build
   **backend** and **frontend** (the latter with
   `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`), tag with both the **git SHA** and
@@ -1076,8 +1084,38 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Immutable SHA tags make every deploy traceable and **instantly rollback-able**
   (re-point to the previous SHA). OIDC means no AWS keys in GitHub.
 
-- [ ] **8.3 Deploy workflow — `ssm:SendCommand` to the instance.**
-  > **Gap found 2026-09-18:** nothing puts the repo's runtime files on the instance.
+- [x] **8.3 Deploy workflow — `ssm:SendCommand` to the instance.**
+  > **Landed 2026-09-20** as the `deploy` job plus
+  > [deploy/deploy.sh](../deploy/deploy.sh), which runs on the instance. The 7 steps
+  > below are unchanged; what the plan didn't say:
+  > - **The 8.3 gap is closed by a git checkout.** The deploy installs `git` (not on the
+  >   AMI), clones the public repo to `/opt/putyouon` once, then fetches and checks out
+  >   the exact SHA being deployed, so the compose file, nginx config and scripts always
+  >   match the images. Never `git clean` there: the materialized `.env` files live in
+  >   that directory.
+  > - **Triggered by CI completing, not by the push.** ci.yml also runs on push to
+  >   `main`, so a `push` trigger would deploy while the tests were still running.
+  >   Branch protection gates the merge, not the push after it. Because `workflow_run`
+  >   reports `github.sha` as main's tip, everything keys off the CI run's `head_sha`.
+  > - **Targeted by instance id, from a secret.** A tag-targeted `SendCommand` returns no
+  >   instance id, and this role deliberately can't list invocations, so the result
+  >   couldn't be polled.
+  > - **`executionTimeout=7200`.** `--timeout-seconds` only bounds pickup, not runtime,
+  >   and a cold first pull is ~1.9 GB.
+  > - **Polled in a loop, not `aws ssm wait command-executed`**, whose waiter gives up
+  >   after 100s and errors if the invocation doesn't exist yet.
+  > - **Output goes to `/var/log/putyouon-deploy.log`** with only the interesting lines
+  >   echoed, and the tail printed on failure: SSM returns at most 24,000 characters, and
+  >   a pull's layer output would bury the actual error.
+  > - **Step 7 is `docker image prune -af`** (see 6.1). The cost: a rollback re-pulls the
+  >   previous image from ECR.
+  >
+  > **Prep done before the first deploy:** the `ssm:SendCommand` placeholder from 0.5 was
+  > scoped to instances tagged `Project=putyouon` (as two statements — a single
+  > conditioned statement would also gate the document ARN, which carries no tags, and
+  > deny everything), and the backend `mem_limit` was lowered (3.4).
+  >
+  > **Original gap note (2026-09-18):** nothing puts the repo's runtime files on the instance.
   > The box needs `docker-compose.prod.yaml`, `nginx/nginx.prod.conf` (bind-mounted by
   > compose) and `deploy/materialize-env.sh` (which writes the env files next to the
   > compose file). `git` isn't on the AL2023 AMI either. Pick a fixed directory (e.g.
@@ -1106,7 +1144,11 @@ is the last thing you wire because it automates a process you've already proven 
   written persist, but a user's run silently stops. Acceptable for now — prefer deploying
   during quiet hours.
 
-- [ ] **8.4 Branch protection + required checks.**
+- [x] **8.4 Branch protection + required checks.**
+  > **Landed 2026-09-20.** `main` requires the `backend` and `frontend` checks from
+  > ci.yml and an up-to-date branch; no required reviewers (solo maintainer), no force
+  > pushes, no deletion. The Deploy workflow is deliberately **not** a required check:
+  > it doesn't run on PRs, so requiring it would block every merge.
   **How:** Require the CI workflow to pass and the branch to be up to date before merge to
   `main`.
   **Why:** Automated deploy from `main` is only safe if `main` is always green and reviewed.
@@ -1145,6 +1187,16 @@ is the last thing you wire because it automates a process you've already proven 
 ## Phase 10 — Pre-launch verification & cutover
 
 - [ ] **10.1 Reconcile + stamp live RDS, then run migrations and verify schema.**
+  > **Stamp done early, 2026-09-20.** The deploy's `alembic upgrade head` could not work
+  > until this landed, so it was pulled forward. Snapshot
+  > `putyouon-db-pre-alembic-stamp-20260920` was taken first, then the single-row
+  > `alembic_version` was moved from `b8c9d0e1f2a3` to `45f91add221e` with a guarded
+  > `UPDATE ... WHERE version_num='b8c9d0e1f2a3'` (the column is `varchar(32)`, the
+  > table had exactly one row, and the statement reported `UPDATE 1`) — the same single
+  > write `alembic stamp` performs, done this way because the backend image didn't exist
+  > in ECR yet. **Remaining here:** the first deploy runs `alembic upgrade head`, which
+  > should be a no-op; that is the real confirmation. Expect the first `--autogenerate`
+  > after cutover to flag the constraint-name drift noted in 6.5.
   **How:** Take an RDS snapshot first. Execute 1.2's audit: confirm the live
   `alembic_version` is `b8c9d0e1f2a3` (the pre-1.2 repo head — now **deleted** by the
   squash, so it no longer exists in the chain). Then **`alembic stamp 45f91add221e`** to
