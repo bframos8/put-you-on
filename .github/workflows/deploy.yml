@@ -56,6 +56,10 @@ jobs:
       - id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # Required for cache-from/to: the default docker driver can't export a cache
+      # ("Cache export is not supported for the docker driver").
+      - uses: docker/setup-buildx-action@v4
+
       # Separate cache scopes from ci.yml's backend build: same layers, but two
       # workflows writing one scope race each other.
       - name: Build and push backend
