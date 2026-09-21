@@ -33,7 +33,58 @@ echo "${COMPOSE_SHA256}  /usr/local/lib/docker/cli-plugins/docker-compose" | sha
 chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
 
 # ACME webroot that nginx serves read-only and Certbot writes into (3.5, Phase 7).
-mkdir -p /var/www/certbot
+mkdir -p /var/www/certbot /var/log/letsencrypt
+
+# Certificate renewal (7.2). Certbot runs as a container: AL2023 has no certbot package
+# and no EPEL. `renew` re-uses the authenticator recorded at issuance (webroot), so the
+# command needs no flags; /var/log/letsencrypt is mounted so a failure still leaves a log
+# behind --quiet. The certificate itself is issued once, by hand (7.1) — a fresh instance
+# has no /etc/letsencrypt, and this timer simply finds nothing to renew until it does.
+cat > /usr/local/bin/reload-nginx.sh <<'EOF'
+#!/bin/sh
+# HUP the compose-managed nginx so it picks up a renewed certificate. A reload keeps the
+# process (and its connections) alive; a restart would drop them. No-op when the stack
+# isn't running, so the renewal timer never fails because of it.
+ids=$(docker ps -q -f label=com.docker.compose.service=nginx)
+[ -n "$ids" ] && docker kill -s HUP $ids
+exit 0
+EOF
+chmod 755 /usr/local/bin/reload-nginx.sh
+
+cat > /etc/systemd/system/certbot-renew.service <<'EOF'
+[Unit]
+Description=Renew Let's Encrypt certificates (certbot container, webroot)
+# Persistent=true can fire this at boot, before dockerd is up.
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker run --rm -v /etc/letsencrypt:/etc/letsencrypt -v /var/lib/letsencrypt:/var/lib/letsencrypt -v /var/log/letsencrypt:/var/log/letsencrypt -v /var/www/certbot:/var/www/certbot certbot/certbot renew --quiet
+# certbot's own --deploy-hook can't do this: it runs inside the certbot container, which
+# has no docker CLI or socket. A script, not an inline command, because systemd would try
+# to expand the `$` in a unit file.
+ExecStartPost=/usr/local/bin/reload-nginx.sh
+EOF
+
+cat > /etc/systemd/system/certbot-renew.timer <<'EOF'
+[Unit]
+Description=Run certbot renew twice daily
+
+[Timer]
+# Twice daily is what Let's Encrypt asks for; renewal only acts inside the last 30 days.
+# The random delay spreads load on their API instead of hitting it on the hour.
+OnCalendar=*-*-* 03,15:00:00
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now certbot-renew.timer
 
 docker --version
 docker compose version
