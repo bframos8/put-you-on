@@ -29,9 +29,13 @@ services:
     # HEALTHCHECK on /health, so other services can gate on it being healthy.
     # Cap memory so a runaway (concurrent ingests spawning spotdl, or a leak) fails this
     # one container instead of OOM-ing the box and taking nginx/frontend with it (3.4).
-    # ~313 MB for both models + transient spotdl/audio overhead; 2g leaves room for the
-    # frontend/nginx and OS on a 4 GB t3.medium.
-    mem_limit: 2g
+    # ~313 MB for both models + transient spotdl/audio overhead. The host is a 2 GB
+    # t3.small (6.1), so a 2 GB cap would equal host RAM and protect nothing: set it
+    # below that, leaving room for the frontend/nginx, dockerd and the OS. Docker allows
+    # up to 2x the limit in swap when memswap_limit is unset, and the box has a 2 GB
+    # swapfile, so a spike during the TF model load degrades instead of being killed.
+    # Confirm with `docker stats` after the first deploy and adjust.
+    mem_limit: 1200m
     networks: [putyouon]
     logging:
       driver: json-file
