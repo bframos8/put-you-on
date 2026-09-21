@@ -830,8 +830,10 @@ is the last thing you wire because it automates a process you've already proven 
   >   [docker-compose.prod.yaml](../docker-compose.prod.yaml) (3.4) equals all the RAM
   >   on this host, so it no longer protects anything. Measure the backend under a
   >   couple of concurrent ingests on the box, then set the cap below host RAM (likely
-  >   ~1.2 GB). *(Set to `1200m` on 2026-09-20 ahead of the first deploy; still worth
-  >   confirming with `docker stats` once the stack is up.)*
+  >   ~1.2 GB). *(Set to `1200m` on 2026-09-20. **Measured after the first deploy:**
+  >   backend 365 MB of the 1200m cap (30%), frontend 64 MB, nginx 6 MB; host 713 MB
+  >   used of 1913 MB with swap untouched. The cap is comfortable — revisit only if
+  >   concurrent ingests push it.)*
   > - 8.3's `docker image prune -f` removes only *dangling* images. SHA-tagged old
   >   images are not dangling, so they would pile up until the 12 GB disk fills. Use
   >   `docker image prune -af` there, which removes every image no container uses.
@@ -1029,6 +1031,14 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 8 — GitHub Actions CI/CD
 
+> **The pipeline is live as of 2026-09-20.** A merge to `main` runs CI, then Deploy
+> builds both images to ECR and rolls them out over SSM. First successful deploy:
+> `c8408e0`, healthy after 2 health-check attempts. `https://putyouon.app` serves over
+> a valid Let's Encrypt certificate, HTTP redirects to HTTPS, `/health` returns
+> `{"status":"ok"}`, and the backend's security headers (incl. HSTS) are present on API
+> routes. Two failures on the way, both recorded below: the missing buildx driver (8.2)
+> and the `GetParametersByPath` resource ARN (8.3).
+
 > Three workflows. Protect `main` so nothing merges without green CI.
 >
 > **Branching model: trunk-based — `main` *is* prod.** Changes ride short-lived feature
@@ -1074,7 +1084,13 @@ is the last thing you wire because it automates a process you've already proven 
   > private repo (A.3), GHA layer cache on its own scopes so it doesn't race ci.yml's
   > backend build. The registry host comes from the ECR login output and the role ARN
   > from the `AWS_DEPLOY_ROLE_ARN` secret, so the AWS account id stays out of this
-  > public repo.
+  > public repo (it is still visible in this public repo's **Actions logs**, where the
+  > build command prints the registry — account ids aren't credentials, but don't
+  > expect them to be hidden).
+  > **Failed on the first run:** `cache-from/to: type=gha` needs buildx's container
+  > driver, so the job must include `docker/setup-buildx-action` (ci.yml had it, this
+  > didn't): *"Cache export is not supported for the docker driver"*, 18s in, nothing
+  > built.
   **How:** Authenticate to AWS via **OIDC** (role from 0.5), `docker login` to ECR, build
   **backend** and **frontend** (the latter with
   `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`), tag with both the **git SHA** and
@@ -1109,6 +1125,13 @@ is the last thing you wire because it automates a process you've already proven 
   >   a pull's layer output would bury the actual error.
   > - **Step 7 is `docker image prune -af`** (see 6.1). The cost: a rollback re-pulls the
   >   previous image from ECR.
+  >
+  > **A Phase 0 permission gap the first deploy exposed:** `putyouon-ec2-ecr-ssm-read`
+  > allowed `ssm:GetParametersByPath` on `parameter/putyouon/prod/*` only, but that API
+  > authorizes against the **path node** (`parameter/putyouon/prod`, no `/*`), so
+  > `materialize-env.sh` failed with `AccessDeniedException`. The policy (now v2) lists
+  > both ARNs. Manual checks never caught it because they used `get-parameter`, a
+  > different action. The deploy failed loudly at step 1 and changed nothing.
   >
   > **Prep done before the first deploy:** the `ssm:SendCommand` placeholder from 0.5 was
   > scoped to instances tagged `Project=putyouon` (as two statements — a single
@@ -1195,7 +1218,9 @@ is the last thing you wire because it automates a process you've already proven 
   > table had exactly one row, and the statement reported `UPDATE 1`) — the same single
   > write `alembic stamp` performs, done this way because the backend image didn't exist
   > in ECR yet. **Remaining here:** the first deploy runs `alembic upgrade head`, which
-  > should be a no-op; that is the real confirmation. Expect the first `--autogenerate`
+  > should be a no-op; that is the real confirmation. **Confirmed 2026-09-20:** the
+  > first deploy's `alembic upgrade head` printed no `Running upgrade` lines, i.e. head
+  > was already applied, so the stamp was right. Expect the first `--autogenerate`
   > after cutover to flag the constraint-name drift noted in 6.5.
   **How:** Take an RDS snapshot first. Execute 1.2's audit: confirm the live
   `alembic_version` is `b8c9d0e1f2a3` (the pre-1.2 repo head — now **deleted** by the
