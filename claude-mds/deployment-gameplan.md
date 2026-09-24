@@ -1255,7 +1255,30 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 10 — Pre-launch verification & cutover
 
-- [ ] **10.1 Reconcile + stamp live RDS, then run migrations and verify schema.**
+- [x] **10.1 Reconcile + stamp live RDS, then run migrations and verify schema.**
+  > **Schema verified 2026-09-24, and 10.1 is closed.** `alembic current` on the live DB
+  > returns `45f91add221e (head)`, and `alembic check` (the autogenerate diff, run from
+  > the deployed backend image against prod) reports **no structural drift whatsoever** —
+  > every table, column, type and `vector` column matches the models. That is the
+  > "confirm tables/indexes/vector columns match" step, done by the tool rather than by
+  > eye. The HNSW index correctly does *not* appear as a diff, because the models never
+  > declare it (it is managed out-of-band; see the baseline's docstring and 10.2).
+  >
+  > **The only differences are two constraint NAMES**, both live-vs-models and neither
+  > structural:
+  >
+  > | Live (Postgres auto-name) | Models (project convention) |
+  > |---|---|
+  > | `songs_album_id_title_key` | `uq_songs_album_id_title` |
+  > | `albums_url_key` | `uq_albums_url` |
+  >
+  > The `songs` one was predicted in 6.5; **`albums_url_key` was not** — it surfaced
+  > here. **This is a trap for 11.1:** the first `alembic revision --autogenerate` will
+  > quietly fold four spurious operations (drop + re-add each constraint) into whatever
+  > migration is being written. Delete them from the generated file unless you actually
+  > intend to rename the constraints — and if you do intend it, do it as its own
+  > migration, since re-adding `uq_songs_album_id_title` rebuilds a unique index over
+  > 110k rows and takes a lock while it does.
   > **Stamp done early, 2026-09-20.** The deploy's `alembic upgrade head` could not work
   > until this landed, so it was pulled forward. Snapshot
   > `putyouon-db-pre-alembic-stamp-20260920` was taken first, then the single-row
@@ -1311,7 +1334,22 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** OAuth, CORS, HSTS, and TLS only fully exercise against the real origin — this is
   the test the dev environment can't give you.
 
-- [ ] **10.4 Document the rollback procedure.**
+- [x] **10.4 Document the rollback procedure.**
+  > **Written 2026-09-24: [deploy/runbook.md](../deploy/runbook.md).** Covers triage,
+  > both rollback paths, migration rollback and snapshot restore, instance rebuild with
+  > the certificate caveat, and what each alarm means. It contains no account id,
+  > instance id or secret — every command looks them up, so it stays safe in a public
+  > repo and survives an instance rebuild.
+  >
+  > Two things found while writing it, both now in the runbook:
+  > - **The rollback window is about five deploys, not ten.** The ECR lifecycle policy
+  >   keeps the last 10 manifests with `tagStatus: any`, and every build pushes *two* —
+  >   the image plus an untagged ~40 KB buildx attestation. Measured: 14 manifests per
+  >   repo, 6 tagged and 7 attestations. Tagged images do get expired. Worth fixing by
+  >   counting only tagged images, or by turning off buildx provenance.
+  > - **Code rollback does not undo a migration.** `alembic upgrade head` runs on every
+  >   deploy and an older image will not downgrade. Stop deploys first, then downgrade or
+  >   restore.
   > **Done 2026-09-24 (found 2026-09-23).** `docker compose` run by hand on the box used
   > to **fail**: the compose file uses `${BACKEND_IMAGE}` / `${FRONTEND_IMAGE}` (3.1),
   > which only existed inside [deploy/deploy.sh](../deploy/deploy.sh)'s environment, so a

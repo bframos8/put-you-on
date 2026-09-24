@@ -118,12 +118,15 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits" {
 
 # --- Metrics the box publishes about itself ------------------------------------------
 
-# The site answering over TLS is the only check that covers the whole path (nginx, the
-# frontend, the backend and the certificate). treat_missing_data = breaching is the
-# important part: if the instance dies, no metric arrives and this still fires.
+# The site answering over TLS is the only check that covers the whole path: DNS, nginx,
+# the certificate, the backend and — since 2026-09-24 — the database. The publisher polls
+# /health/ready rather than /health, because /health is liveness only and answers 200 with
+# RDS entirely gone, which meant this alarm stayed green through the most likely outage
+# there is. treat_missing_data = breaching is the other important half: if the instance
+# dies, no metric arrives at all and this still fires.
 resource "aws_cloudwatch_metric_alarm" "site_down" {
   alarm_name          = "putyouon-site-down"
-  alarm_description   = "https://putyouon.app/health is not returning 200, or the instance stopped reporting."
+  alarm_description   = "https://putyouon.app/health/ready is not returning 200 (backend or database), or the instance stopped reporting."
   namespace           = "putyouon/instance"
   metric_name         = "SiteUp"
   statistic           = "Minimum"
