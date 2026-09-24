@@ -1,0 +1,53 @@
+// Grafana Alloy: collect host metrics and remote-write them to Grafana Cloud
+// (observability-plan 2/3, gameplan 9.1).
+//
+// Only the host exporter runs here. cAdvisor and the app's own /metrics are deliberately
+// left out this pass: the box has 2 GB of RAM (6.1) and cAdvisor is the heaviest of the
+// three agents, while app instrumentation is a backend code change. This gives the thing
+// that was actually missing — CPU, memory, disk and network for the instance — since disk
+// in particular is not a CloudWatch metric at all.
+//
+// Alloy's built-in unix exporter replaces a separate node_exporter container: same
+// collectors, one less service and ~20 MB less RAM.
+
+// The host filesystem is mounted read-only at /host so the exporter reads the real host,
+// not the container's view of it.
+prometheus.exporter.unix "host" {
+  rootfs_path = "/host"
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+
+  filesystem {
+    // Docker's overlay mounts would otherwise appear as dozens of near-duplicate
+    // filesystems, which inflates series count against the free tier for no insight.
+    mount_points_exclude = "^/(dev|proc|sys|run|var/lib/docker/.+)($|/)"
+    fs_types_exclude     = "^(autofs|binfmt_misc|cgroup.*|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|procfs|pstore|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+    mount_timeout        = "5s"
+  }
+}
+
+// 60s rather than the 15s default: this is a single small host, and a 4x lower sample rate
+// is 4x fewer samples against the free tier's ingest limits.
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "60s"
+}
+
+// Credentials come from .env-observability, materialized from SSM at deploy time (5.2), so
+// no token is ever written into this file or an image.
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USER")
+      password = sys.env("GRAFANA_PROM_TOKEN")
+    }
+  }
+
+  // Scraped series already carry an `instance` label, so only add what's missing.
+  external_labels = {
+    env = "prod",
+  }
+}

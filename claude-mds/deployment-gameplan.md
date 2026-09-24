@@ -1180,7 +1180,24 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 9 — Observability, backups, alarms
 
-- [ ] **9.1 Metrics + dashboards: follow the observability plan.**
+- [x] **9.1 Metrics + dashboards: follow the observability plan.**
+  > **Landed 2026-09-23, deliberately reduced.** One agent, not three: a `grafana/alloy`
+  > service in [docker-compose.prod.yaml](../docker-compose.prod.yaml) using Alloy's
+  > **built-in unix exporter** ([observability/config.alloy](../observability/config.alloy)),
+  > remote-writing host CPU/memory/disk/network to Grafana Cloud every 60s.
+  > - **cAdvisor and the app's `/metrics` are deferred.** The box has 2 GB (6.1);
+  >   cAdvisor is the heaviest of the plan's three agents and app instrumentation is a
+  >   backend code change. This pass buys the thing that was actually blind: **disk**,
+  >   which CloudWatch doesn't publish for EC2 at all.
+  > - Alloy's built-in exporter replaces a separate node_exporter container. Measured
+  >   ~52 MB against a 200m cap; the host mount is read-only.
+  > - Not on the app network and the UI isn't exposed: it only talks outbound.
+  > - Credentials: `GRAFANA_PROM_URL` / `_USER` / `_TOKEN` in SSM, routed by
+  >   [materialize-env.sh](../deploy/materialize-env.sh) into a **third** env file,
+  >   `.env-observability`, so a Grafana token never enters the app's environment.
+  >   Seeding path updated: `ssm-seed.sh` allowlist, `prod.env.example`,
+  >   [ssm-parameters.md](../deploy/ssm-parameters.md).
+  > - Series count is ~1,000-1,300 at 60s, well inside the free tier's 10k.
   **How:** Collection and dashboards are specified in
   [observability-plan.md](observability-plan.md) (locked: Grafana Cloud + a local Alloy
   agent scraping node_exporter, cAdvisor, and the app's `/metrics`; RDS via the CloudWatch
@@ -1188,7 +1205,25 @@ is the last thing you wire because it automates a process you've already proven 
   layer on a RAM-tight box. (Container log size is already capped per 3.3.)
   **Why:** One collection stack, already decided and sized for this instance.
 
-- [ ] **9.2 Minimal alarms on the things that page you.**
+- [x] **9.2 Minimal alarms on the things that page you.**
+  > **Landed 2026-09-23** in [infra/monitoring.tf](../infra/monitoring.tf): SNS topic
+  > `putyouon-alerts` + email subscription, and 7 alarms, all confirmed `OK`.
+  > **AWS-published:** EC2 status check, RDS free storage (<3 GB), RDS connections (>80
+  > of ~112 max), RDS CPU credit balance (<30 — the unlimited-mode *cost* risk from 6.5).
+  > **Self-reported**, because AWS can't see them: `putyouon-metrics.timer` publishes
+  > `SiteUp`, `CertDaysRemaining` and `DiskUsedPercent` to `putyouon/instance` every 5
+  > minutes (script + units in [user-data.sh](../infra/user-data.sh), installed on the
+  > running box by hand since `ignore_changes = [user_data]`).
+  > - **`SiteUp` uses `treat_missing_data = "breaching"`**, so a dead instance alarms
+  >   instead of going quiet. That also means the metric must flow *before* the alarm
+  >   exists: created in two stages (IAM + SNS, verify datapoints, then alarms).
+  > - **`SiteUp` is published in its own API call.** `put-metric-data` rejects the whole
+  >   call if any value is malformed, so a bad certificate reading must not be able to
+  >   suppress the uptime signal and page falsely.
+  > - `CertDaysRemaining < 20` closes the renewal blind spot from 7.2.
+  > - Cost: $0 — 3 custom metrics and 7 alarms sit inside CloudWatch's always-free tier.
+  > - **Still required:** confirm the SNS subscription email; until then it reads
+  >   `PendingConfirmation` and nothing is delivered.
   **How:** The observability plan defers full alerting to its Phase 6, but keep a **tiny
   CloudWatch alarm set** on what's native without an agent: RDS free storage, RDS
   connections, EC2 status checks — plus an external uptime check on `/health`. (EC2
@@ -1199,7 +1234,14 @@ is the last thing you wire because it automates a process you've already proven 
   most common ways this class of app falls over; these alarms read AWS-side metrics
   directly and don't touch the Grafana stack.
 
-- [ ] **9.3 Confirm RDS backups + test a restore.**
+- [x] **9.3 Confirm RDS backups + test a restore.**
+  > **Done 2026-09-23.** Automated backups confirmed: 7-day retention, daily snapshots,
+  > point-in-time restore available. **Practice restore performed**, not just inspected:
+  > the latest automated snapshot was restored to a scratch `db.t4g.micro`
+  > (`putyouon-db-restoretest`, private, same SG) and queried from the instance. Every
+  > figure matched production exactly — 110,861 songs all with embeddings, 89,075 albums,
+  > 2 users, `alembic_version = 45f91add221e`, pgvector 0.8.1. The scratch instance was
+  > then deleted with no final snapshot. Total cost, a few cents.
   **How:** Verify automated backups + retention on RDS; do one **practice restore** to a
   scratch instance.
   **Why:** A backup you've never restored is a hypothesis, not a backup. RDS makes this easy —

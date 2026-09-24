@@ -86,5 +86,79 @@ EOF
 systemctl daemon-reload
 systemctl enable --now certbot-renew.timer
 
+# Self-reported CloudWatch metrics (9.2). These three aren't available to AWS: EC2 has no
+# native disk metric, nothing outside the box knows whether the site answers, and nothing
+# watches the certificate. The matching alarms live in infra/monitoring.tf; the uptime one
+# treats missing data as breaching, so a silent box alarms too.
+cat > /usr/local/bin/putyouon-metrics.sh <<'EOF'
+#!/bin/bash
+set -uo pipefail
+REGION=us-east-1
+CERT=/etc/letsencrypt/live/putyouon.app/cert.pem
+
+# Through the public name, not localhost: this exercises DNS, nginx, TLS and the app the
+# way a user does.
+if curl -fsS -m 10 https://putyouon.app/health | grep -q '"status":"ok"'; then
+  up=1
+else
+  up=0
+fi
+
+# SiteUp goes in its own call on purpose. put-metric-data rejects the WHOLE call if any
+# value is malformed, and the site-down alarm treats missing data as breaching — so a bad
+# certificate reading must not be able to suppress the uptime signal and page you falsely.
+aws cloudwatch put-metric-data --region "$REGION" --namespace putyouon/instance \
+  --metric-data "MetricName=SiteUp,Value=${up},Unit=None"
+
+metrics=""
+
+# Absent before the certificate is first issued (7.1); that alarm treats missing as OK.
+if [ -f "$CERT" ]; then
+  end=$(openssl x509 -enddate -noout -in "$CERT" | cut -d= -f2)
+  days=""
+  [ -n "$end" ] && days=$(( ( $(date -d "$end" +%s) - $(date +%s) ) / 86400 ))
+  [ -n "$days" ] && metrics="MetricName=CertDaysRemaining,Value=${days},Unit=Count"
+fi
+
+disk=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+[ -n "$disk" ] && metrics="$metrics MetricName=DiskUsedPercent,Value=${disk},Unit=Percent"
+
+if [ -n "$metrics" ]; then
+  # shellcheck disable=SC2086 # deliberate word splitting: one entry per metric
+  aws cloudwatch put-metric-data --region "$REGION" --namespace putyouon/instance \
+    --metric-data $metrics
+fi
+EOF
+chmod 755 /usr/local/bin/putyouon-metrics.sh
+
+cat > /etc/systemd/system/putyouon-metrics.service <<'EOF'
+[Unit]
+Description=Publish putyouon host metrics to CloudWatch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/putyouon-metrics.sh
+EOF
+
+cat > /etc/systemd/system/putyouon-metrics.timer <<'EOF'
+[Unit]
+Description=Publish putyouon host metrics every 5 minutes
+
+[Timer]
+# Matches the alarms' 300s period. Two missed runs is what trips the site-down alarm, so
+# keep systemd's default 1-minute slack from drifting runs into the next window.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now putyouon-metrics.timer
+
 docker --version
 docker compose version

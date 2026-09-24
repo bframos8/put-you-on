@@ -41,6 +41,9 @@ only to override.
 | `POSTGRES_DB` | SecureString | ✅ | RDS database name. |
 | `POSTGRES_HOST` | String | ✅ | RDS endpoint host. Not secret, but required (no useful default). |
 | `POSTGRES_PORT` | String | ✅ | Usually `5432`. |
+| `GRAFANA_PROM_URL` | String | ➖ | Grafana Cloud remote-write endpoint (9.1). Consumed by the Alloy agent, not the app. |
+| `GRAFANA_PROM_USER` | String | ➖ | Grafana Cloud instance id (numeric). |
+| `GRAFANA_PROM_TOKEN` | SecureString | ➖ | Grafana Cloud access token. Metrics stop flowing without it; the app is unaffected. |
 | `SPOTIFY_REDIRECT_URI` | String | ✅ | `https://putyouon.app/api/v1/auth/spotify/callback`. Silent localhost fallback if omitted → broken OAuth. |
 | `FRONTEND_URL` | String | ✅ | `https://putyouon.app`. |
 | `CORS_ALLOWED_ORIGINS` | String | ✅ | `https://putyouon.app`. |
