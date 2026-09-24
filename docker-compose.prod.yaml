@@ -86,6 +86,46 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Host metrics -> Grafana Cloud (gameplan 9.1). Only this one agent: cAdvisor is the
+  # heaviest of the plan's three and the box has 2 GB (6.1), so containers and app RED
+  # metrics wait for a later pass. Alloy's built-in unix exporter covers host CPU, memory,
+  # disk and network, and disk is not a CloudWatch metric at all.
+  alloy:
+    image: grafana/alloy:v1.19.2
+    restart: unless-stopped
+    # GRAFANA_PROM_URL / _USER / _TOKEN, materialized from SSM at deploy (5.2). Kept out
+    # of .env-backend so a Grafana token is never in the app's environment.
+    env_file:
+      - .env-observability
+    # No --server.http.listen-addr: the UI would otherwise be reachable from the app
+    # containers, and nothing needs it. --storage.path keeps the remote_write WAL on a
+    # volume, so a restart doesn't lose buffered metrics (the image's default is lost
+    # when a custom command replaces it).
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/config.alloy:/etc/alloy/config.alloy:ro
+      # Read-only view of the host for the unix exporter. rslave so later host mounts are
+      # visible without restarting the container.
+      - /:/host:ro,rslave
+      - alloy-data:/var/lib/alloy/data
+    # Small and bounded: metrics collection must never be why the app runs out of memory.
+    # Measured ~52 MB in practice, and an OOM here would only restart alloy, not the app.
+    mem_limit: 200m
+    # Deliberately not on the putyouon network: it only talks outbound to Grafana Cloud,
+    # and the app has no reason to reach it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # remote_write write-ahead log, so a restart doesn't drop buffered metrics.
+  alloy-data:
+
 networks:
   putyouon:
     driver: bridge
