@@ -1296,24 +1296,43 @@ is the last thing you wire because it automates a process you've already proven 
   it means every recommendation request pays full-table-scan latency.
 
 - [ ] **10.3 End-to-end smoke test.**
+  > **Security headers on `/` fixed first, 2026-09-24.** The check below would have
+  > failed: `https://putyouon.app/` returned only `x-powered-by: Next.js`, while
+  > `/health` returned the full set. The headers come from the app's
+  > `SecurityHeadersMiddleware`, so nothing proxied to Next.js ever got them — including
+  > the origin's entry point, which is the hit that decides whether HSTS takes effect at
+  > all. nginx now sets HSTS, `X-Content-Type-Options`, `Referrer-Policy` and
+  > `X-Frame-Options` on `location /` only (a server-level set would duplicate them on
+  > `/api/` and `/health`, since `add_header` appends). **CSP deliberately left out:** the
+  > backend's `default-src 'none'` is right for JSON and would break every script, style,
+  > font and image on a Next.js page. A real frontend policy is its own pass.
   **How:** Full Spotify OAuth round-trip on the real domain, a top-tracks fetch, and one ML
   ingest/classify call. Check security headers + HSTS and an SSL Labs scan.
   **Why:** OAuth, CORS, HSTS, and TLS only fully exercise against the real origin — this is
   the test the dev environment can't give you.
 
 - [ ] **10.4 Document the rollback procedure.**
-  > **Do this first (found 2026-09-23):** `docker compose` run **by hand on the box
-  > fails**. The compose file uses `${BACKEND_IMAGE}` / `${FRONTEND_IMAGE}` (3.1), which
-  > only exist inside [deploy/deploy.sh](../deploy/deploy.sh)'s environment, so a plain
-  > `docker compose -f docker-compose.prod.yaml ps` errors with *"service frontend has
-  > neither an image nor a build context specified"*. That is exactly the moment you
-  > need it — mid-incident, running `ps`, `logs` or `down` by hand. **Fix:** have the
-  > deploy write those two values to `/opt/putyouon/.env`, which compose loads
-  > automatically for interpolation; every manual compose command then works, and it
-  > also records which SHA is currently running (useful for 10.4's rollback). Until
-  > then, the workaround is
-  > `export BACKEND_IMAGE=$(docker inspect -f '{{.Config.Image}}' putyouon-backend-1)`
-  > and the same for the frontend.
+  > **Done 2026-09-24 (found 2026-09-23).** `docker compose` run by hand on the box used
+  > to **fail**: the compose file uses `${BACKEND_IMAGE}` / `${FRONTEND_IMAGE}` (3.1),
+  > which only existed inside [deploy/deploy.sh](../deploy/deploy.sh)'s environment, so a
+  > plain `docker compose -f docker-compose.prod.yaml ps` errored with *"service backend
+  > has neither an image nor a build context specified"* — mid-incident, which is exactly
+  > when you reach for `ps`, `logs` or `down`. The deploy now writes both values to
+  > `/opt/putyouon/.env` (atomically, mode 644 — image refs, not secrets), which compose
+  > auto-loads for interpolation from the **compose file's** directory, so manual commands
+  > work from anywhere on the box. It doubles as a record of the deployed SHA, which is
+  > where a rollback starts. The exports still win during a deploy, so a stale file from a
+  > failed run is inert; it does name the last SHA *attempted*, not necessarily the one
+  > serving.
+  >
+  > **A second gap found while fixing it: the deploy never reloaded nginx.** `up -d` only
+  > recreates a container whose *spec* changed, and nginx pins `nginx:alpine` with a
+  > bind-mounted config — so an edit to `nginx.prod.conf` landed on disk via the checkout
+  > and the running nginx, which reads its config once at startup, kept serving the old
+  > one indefinitely. Visible in `docker ps`: nginx's uptime outlived every deploy. The
+  > deploy now runs `nginx -t` in the container and then HUPs it. The test is the point —
+  > a HUP with a broken config is a silent no-op (nginx logs, keeps the old config) and
+  > the health gate would still pass while the change did nothing.
   **How:** Write down: re-run the Deploy workflow pinned to the previous image SHA; if a
   migration was destructive, restore from the RDS snapshot taken pre-deploy. Also cover
   **instance rebuild**: `/etc/letsencrypt` lives only on the instance's EBS volume, so a
