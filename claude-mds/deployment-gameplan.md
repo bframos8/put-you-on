@@ -1330,9 +1330,18 @@ is the last thing you wire because it automates a process you've already proven 
   > bind-mounted config — so an edit to `nginx.prod.conf` landed on disk via the checkout
   > and the running nginx, which reads its config once at startup, kept serving the old
   > one indefinitely. Visible in `docker ps`: nginx's uptime outlived every deploy. The
-  > deploy now runs `nginx -t` in the container and then HUPs it. The test is the point —
-  > a HUP with a broken config is a silent no-op (nginx logs, keeps the old config) and
-  > the health gate would still pass while the change did nothing.
+  > deploy now recreates the nginx container.
+  >
+  > A reload was tried first and **did not work**, for a reason worth remembering: the
+  > config is a **single-file bind mount**, which Docker resolves by inode at container
+  > start. `git checkout` replaces the file instead of editing it, so the new content
+  > arrives on a new inode while the container keeps reading the old one, which survives
+  > because the mount holds it. The HUP genuinely fired (the worker was replaced) and
+  > reloaded the stale config; `nginx -t` inside the container "passed" because it was
+  > testing that same old file. Measured 2026-09-24: 7 `add_header` lines on disk, 0 at
+  > the identical path inside the container. Only recreating re-resolves the mount, so
+  > the deploy uses `up -d --force-recreate --no-deps nginx` (`--no-deps` so it doesn't
+  > also recreate the backend and frontend that step 5 just settled).
   **How:** Write down: re-run the Deploy workflow pinned to the previous image SHA; if a
   migration was destructive, restore from the RDS snapshot taken pre-deploy. Also cover
   **instance rebuild**: `/etc/letsencrypt` lives only on the instance's EBS volume, so a

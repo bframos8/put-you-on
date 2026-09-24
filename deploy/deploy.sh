@@ -79,20 +79,26 @@ echo "==> alembic upgrade head"
 echo "==> starting the stack"
 "${COMPOSE[@]}" up -d >>"$LOG" 2>&1
 
-# 6. Reload nginx. `up -d` only recreates a container whose SPEC changed, and nginx pins
-#    nginx:alpine with a bind-mounted config — so when a commit edits nginx.prod.conf the
-#    new file lands on disk via the checkout and the running nginx, which read its config
-#    once at startup, keeps serving the old one forever. (Observable: nginx's uptime is
-#    older than backend's and frontend's after any normal deploy.)
+# 6. Recreate nginx so that a changed config actually takes effect. `up -d` alone never
+#    touches it: nginx pins nginx:alpine with no build, so its container spec is identical
+#    between deploys and compose sees nothing to do. (Observable: nginx's uptime outlives
+#    every deploy while backend and frontend restart.)
 #
-#    `nginx -t` first because a HUP with a broken config is a SILENT no-op: nginx logs the
-#    error, keeps the old config, and the health gate below would still pass while the
-#    change did nothing. Failing the deploy loudly is the honest outcome. HUP rather than
-#    a restart so live connections survive — same mechanism reload-nginx.sh uses after a
-#    cert renewal (6.3).
-echo "==> reloading nginx"
-"${COMPOSE[@]}" exec -T nginx nginx -t >>"$LOG" 2>&1
-"${COMPOSE[@]}" kill -s HUP nginx >>"$LOG" 2>&1
+#    A reload is not enough either, and this is the subtle part. The config is a
+#    SINGLE-FILE bind mount, which Docker resolves by inode at container start. `git
+#    checkout` replaces the file rather than editing it in place, so the new content
+#    arrives on a NEW inode while the container goes on reading the old one — which still
+#    exists precisely because the mount holds it. A HUP then reloads the stale config and
+#    reports success, and `nginx -t` inside the container "passes" for the same reason: it
+#    is testing the old file. Measured 2026-09-24 — the file on disk had the new headers,
+#    the identical path inside the container had none, and the worker had genuinely been
+#    replaced by the HUP. Recreating the container is what re-resolves the mount.
+#
+#    --no-deps so this recreates nginx alone; without it, `up SERVICE` would also
+#    force-recreate backend and frontend, which step 5 just settled. A broken config is
+#    caught by the health gate below, which curls through nginx.
+echo "==> recreating nginx"
+"${COMPOSE[@]}" up -d --force-recreate --no-deps nginx >>"$LOG" 2>&1
 
 # 7. Health gate: a bad deploy should fail the job, not sit there silently broken. Through
 #    nginx on :443 so this also proves TLS and the proxy, not just the backend. -k because

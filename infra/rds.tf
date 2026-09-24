@@ -22,9 +22,19 @@ resource "aws_db_instance" "main" {
   identifier          = "putyouon-db"
   snapshot_identifier = "final-put-you-on-instance-2e36d4fe0-ae3a-457a-9e19-36cd188f6067"
 
-  # 1 GB RAM. The 1280-dim embeddings (~560 MB raw) won't stay cached, so kNN reads hit
-  # disk until the HNSW index exists (10.2). Move to db.t4g.small if latency is bad.
-  instance_class = "db.t4g.micro"
+  # db.t4g.micro (1 GB) normally, raised temporarily to build the HNSW index — see
+  # variables.tf for why and how. Measured on the micro before the index existed: one
+  # recommendation query seq-scanned 110,833 rows in 8.08 s, 7.8 s of that waiting on
+  # disk, because the 1280-dim embeddings (~560 MB raw) don't stay cached at this size.
+  instance_class = var.db_instance_class
+
+  # Changing instance_class is an in-place ModifyDBInstance, not a replacement, so
+  # prevent_destroy below does not block it. But without apply_immediately, RDS queues the
+  # modify for the maintenance window (Wednesdays 06:08 UTC) while Terraform writes the
+  # new class into state and reports success — state and reality would quietly disagree
+  # for days, and a plan would look clean the whole time. The cost of true is a reboot of
+  # a few minutes per change, which 10.2's scale up and back accepts.
+  apply_immediately = true
 
   # The snapshot's 30 GB is the floor; a restore can't shrink it.
   allocated_storage = 30
