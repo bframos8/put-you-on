@@ -1198,6 +1198,11 @@ is the last thing you wire because it automates a process you've already proven 
   >   Seeding path updated: `ssm-seed.sh` allowlist, `prod.env.example`,
   >   [ssm-parameters.md](../deploy/ssm-parameters.md).
   > - Series count is ~1,000-1,300 at 60s, well inside the free tier's 10k.
+  > - **Live 2026-09-24.** Credentials seeded (stack `prometheus-prod-36-prod-us-west-0`),
+  >   Alloy restarted, WAL replayed and no send failures. *(First attempt shipped the
+  >   placeholder endpoint from the example command and got HTTP 530 from Grafana's edge;
+  >   the agent kept retrying from its WAL, so nothing was lost.)* The remote-write token
+  >   is write-only, so confirm data in Grafana Explore, not by querying with it.
   **How:** Collection and dashboards are specified in
   [observability-plan.md](observability-plan.md) (locked: Grafana Cloud + a local Alloy
   agent scraping node_exporter, cAdvisor, and the app's `/metrics`; RDS via the CloudWatch
@@ -1222,8 +1227,7 @@ is the last thing you wire because it automates a process you've already proven 
   >   suppress the uptime signal and page falsely.
   > - `CertDaysRemaining < 20` closes the renewal blind spot from 7.2.
   > - Cost: $0 — 3 custom metrics and 7 alarms sit inside CloudWatch's always-free tier.
-  > - **Still required:** confirm the SNS subscription email; until then it reads
-  >   `PendingConfirmation` and nothing is delivered.
+  > - **Subscription confirmed 2026-09-24**, so alarm notifications now deliver.
   **How:** The observability plan defers full alerting to its Phase 6, but keep a **tiny
   CloudWatch alarm set** on what's native without an agent: RDS free storage, RDS
   connections, EC2 status checks — plus an external uptime check on `/health`. (EC2
@@ -1298,6 +1302,18 @@ is the last thing you wire because it automates a process you've already proven 
   the test the dev environment can't give you.
 
 - [ ] **10.4 Document the rollback procedure.**
+  > **Do this first (found 2026-09-23):** `docker compose` run **by hand on the box
+  > fails**. The compose file uses `${BACKEND_IMAGE}` / `${FRONTEND_IMAGE}` (3.1), which
+  > only exist inside [deploy/deploy.sh](../deploy/deploy.sh)'s environment, so a plain
+  > `docker compose -f docker-compose.prod.yaml ps` errors with *"service frontend has
+  > neither an image nor a build context specified"*. That is exactly the moment you
+  > need it — mid-incident, running `ps`, `logs` or `down` by hand. **Fix:** have the
+  > deploy write those two values to `/opt/putyouon/.env`, which compose loads
+  > automatically for interpolation; every manual compose command then works, and it
+  > also records which SHA is currently running (useful for 10.4's rollback). Until
+  > then, the workaround is
+  > `export BACKEND_IMAGE=$(docker inspect -f '{{.Config.Image}}' putyouon-backend-1)`
+  > and the same for the frontend.
   **How:** Write down: re-run the Deploy workflow pinned to the previous image SHA; if a
   migration was destructive, restore from the RDS snapshot taken pre-deploy. Also cover
   **instance rebuild**: `/etc/letsencrypt` lives only on the instance's EBS volume, so a
