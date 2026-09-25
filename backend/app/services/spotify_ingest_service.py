@@ -37,6 +37,24 @@ AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".ogg"}
 INGEST_MAX_ATTEMPTS = 3
 
 
+def _redact_secrets(text: str) -> str:
+    """Strip known secret values out of a string before it is stored or logged.
+
+    Belt and braces behind _download's own handling. The error text that reaches
+    ingest_error comes from a subprocess and, once the worker (10.6) is running, from
+    another machine entirely — so the value is worth checking at the point of storage
+    rather than trusting every producer of it to be careful forever.
+
+    Matching on the exact configured value, not a pattern: no false positives, nothing to
+    tune, and it fails safe if the variable is unset (nothing to match, nothing redacted).
+    """
+    for name in ("SPOTIFY_CLIENT_SECRET", "SPOTIFY_CLIENT_ID", "INGEST_WORKER_TOKEN"):
+        value = os.getenv(name)
+        if value and value in text:
+            text = text.replace(value, f"[redacted:{name}]")
+    return text
+
+
 class NoUsableSeedsError(RuntimeError):
     """Every one of the user's seeds failed or is still unprocessed, so there is nothing
     to build a recommendation from. A typed error rather than an AttributeError deep in
@@ -69,14 +87,34 @@ class SpotifyIngestService:
         # download produced no audio (the old line-58 success check).
         job_dir = Path(tempfile.mkdtemp(prefix="ingest_", dir=DOWNLOADS_DIR))
         try:
-            subprocess.run(
+            # NOT check=True, and this is a security fix rather than a style choice.
+            # CalledProcessError stringifies the entire argv, which carries
+            # --client-secret. That string reaches _record_failure, which stores its
+            # first 500 characters in user_top_songs.ingest_error — and the secret sits
+            # well inside that window. So every failed download was writing the Spotify
+            # client secret into the database and the container logs.
+            result = subprocess.run(
                 ["spotdl", "--no-cache", "--format", "mp3", "--bitrate", "320k",
                 "--client-id", os.getenv("SPOTIFY_CLIENT_ID"),
                 "--client-secret", os.getenv("SPOTIFY_CLIENT_SECRET"),
                 "--output", str(job_dir),
                 spotify_url],
-                check=True,
+                capture_output=True,
+                text=True,
             )
+            if result.returncode != 0:
+                # Keep the lines that carry words: spotdl prints rich-formatted
+                # tracebacks, so most of the output is box drawing and source echo, and
+                # this string is what a human reads when triaging a failed seed.
+                tail = [
+                    line.strip(" │╭╮╰╯─")
+                    for line in (result.stderr or result.stdout or "").splitlines()
+                    if line.strip(" │╭╮╰╯─")
+                ]
+                raise RuntimeError(
+                    f"spotdl exited {result.returncode}: "
+                    + (" | ".join(tail[-2:]) if tail else "no output")
+                )
             audio_files = [
                 f for f in job_dir.rglob("*")
                 if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
@@ -267,7 +305,7 @@ class SpotifyIngestService:
         top_song.ingest_attempts = (top_song.ingest_attempts or 0) + 1
         # Truncated: this is shown to the user and a spotdl traceback can run to
         # kilobytes. The full text is in the container logs.
-        top_song.ingest_error = str(error)[:500]
+        top_song.ingest_error = _redact_secrets(str(error))[:500]
         if top_song.ingest_attempts >= INGEST_MAX_ATTEMPTS:
             top_song.ingest_failed_at = datetime.now()
             logger.warning(
