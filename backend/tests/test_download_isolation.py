@@ -3,6 +3,7 @@ ingests can't grab each other's files, and the file-finding glob is scoped to
 that temp dir (not the whole downloads dir). _cleanup removes the whole temp dir,
 and a failed download cleans up after itself.
 """
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,18 +21,25 @@ def svc(monkeypatch, tmp_path):
     return SpotifyIngestService()
 
 
+def _completed(cmd, returncode=0, stderr=""):
+    # _download reads .returncode now instead of relying on check=True, which it cannot
+    # use: CalledProcessError stringifies the argv, and the argv holds --client-secret.
+    return subprocess.CompletedProcess(args=cmd, returncode=returncode, stdout="", stderr=stderr)
+
+
 def _spotdl_writes(filename="Artist - Title.mp3"):
     """A subprocess.run side_effect that drops a fake audio file into whatever
     dir was passed via --output (mimicking a successful spotdl run)."""
     def _run(cmd, *args, **kwargs):
         out = Path(cmd[cmd.index("--output") + 1])
         (out / filename).write_bytes(b"fake-audio")
+        return _completed(cmd)
     return _run
 
 
 def _spotdl_writes_nothing():
     def _run(cmd, *args, **kwargs):
-        pass
+        return _completed(cmd)
     return _run
 
 
