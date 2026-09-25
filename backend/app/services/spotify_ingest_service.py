@@ -27,6 +27,21 @@ GRAPH_FILE = Path(__file__).resolve().parents[1] / "models" / "discogs-effnet-bs
 DOWNLOADS_DIR = Path(__file__).parent / "downloads"
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".ogg"}
 
+# How many times a seed's audio fetch may fail before we give up on it (10.5). Downloads
+# fail for two different reasons and this number has to serve both: a transient network
+# or provider hiccup, which a retry fixes, and a track that simply cannot be fetched —
+# unavailable, region-locked, or blocked at the source — which no number of retries fixes.
+# Three is enough to ride out the former without spending minutes per request on the
+# latter. Reaching it sets ingest_failed_at, which is what makes the seed terminal and
+# stops snapshot_is_stale from re-queueing the whole ingest forever.
+INGEST_MAX_ATTEMPTS = 3
+
+
+class NoUsableSeedsError(RuntimeError):
+    """Every one of the user's seeds failed or is still unprocessed, so there is nothing
+    to build a recommendation from. A typed error rather than an AttributeError deep in
+    the query, so callers can turn it into an honest response instead of a 500 (10.5)."""
+
 
 class SpotifyIngestService:
     def __init__(self):
@@ -115,29 +130,53 @@ class SpotifyIngestService:
             os.remove(audio_path)
 
     def add_user_top_songs(self, tracks: list[dict], user: User, db: Session) -> None:
-        db.query(UserTopSong).filter(UserTopSong.user_id == user.id).delete()
+        # Refresh the seed set, KEEPING per-track state for tracks that are still in it.
+        #
+        # This used to be an unconditional delete-then-insert. That quietly defeated the
+        # whole attempt cap (10.5): a failed seed would be wiped and re-added with
+        # ingest_attempts back at 0 on every pass, so it could never reach
+        # INGEST_MAX_ATTEMPTS and never become terminal — the loop this was meant to end.
+        # It also discarded used_as_query, losing A6's place in the recycling walk.
+        #
+        # Someone's top tracks barely move between snapshots, so nearly every row is a
+        # survivor. Only genuinely departed tracks are deleted.
         snapshot_at = datetime.now()
         track_ids = [track["id"] for track in tracks]
+
+        existing_rows = {
+            row.spotify_track_id: row
+            for row in db.query(UserTopSong).filter(UserTopSong.user_id == user.id).all()
+        }
+        for track_id, row in existing_rows.items():
+            if track_id not in track_ids:
+                db.delete(row)
+
         existing_by_track = {
             s.spotify_track_id: s
             for s in db.query(Song).filter(Song.spotify_track_id.in_(track_ids)).all()
         } if track_ids else {}
+
         for track in tracks:
             spotify_track_id = track["id"]
             song = existing_by_track.get(spotify_track_id)
-            db.add(UserTopSong(
-                user_id=user.id,
-                song_id=song.id if song else None,
-                spotify_track_id=spotify_track_id,
-                spotify_url=track["external_urls"]["spotify"],
-                image_url=track["album"]["images"][0]["url"],
-                artist_name=track["artists"][0]["name"],
-                track_title=track["name"],
-                album_title=track["album"]["name"],
-                duration_ms=track.get("duration_ms"),
-                genre=song.genre if song else None,
-                snapshot_at=snapshot_at,
-            ))
+            row = existing_rows.get(spotify_track_id)
+            if row is None:
+                row = UserTopSong(user_id=user.id, spotify_track_id=spotify_track_id)
+                db.add(row)
+            # Metadata is refreshed from Spotify every time; queue state
+            # (ingest_attempts, ingest_failed_at, ingest_error, used_as_query) is
+            # deliberately left alone on survivors.
+            row.spotify_url = track["external_urls"]["spotify"]
+            row.image_url = track["album"]["images"][0]["url"]
+            row.artist_name = track["artists"][0]["name"]
+            row.track_title = track["name"]
+            row.album_title = track["album"]["name"]
+            row.duration_ms = track.get("duration_ms")
+            row.snapshot_at = snapshot_at
+            # Only fill these from the corpus; never blank out a link we already have.
+            if song is not None:
+                row.song_id = song.id
+                row.genre = song.genre
         db.commit()
 
     def process_top_tracks(
@@ -179,6 +218,7 @@ class SpotifyIngestService:
                     audio_path = self._download(top_song.spotify_url)
                 except Exception as e:
                     logger.warning("Skipping %s: download failed: %s", top_song.track_title, e)
+                    self._record_failure(top_song, e, db)
                     continue
 
                 logger.info("Downloaded to: %s", audio_path)
@@ -209,11 +249,31 @@ class SpotifyIngestService:
                 except Exception as e:
                     db.rollback()
                     logger.warning("Skipping %s: processing failed: %s", top_song.track_title, e)
+                    # After the rollback, deliberately: recording the attempt inside the
+                    # failed transaction would roll the counter back with it, and the
+                    # seed would never reach the cap.
+                    self._record_failure(top_song, e, db)
                 finally:
                     self._cleanup(audio_path)
 
             if success and not first_done and on_first_success:
                 first_done = self._fire_first_success(on_first_success, db)
+
+    @staticmethod
+    def _record_failure(top_song: UserTopSong, error: Exception, db: Session) -> None:
+        # Count the attempt, and retire the seed once it hits the cap. ingest_failed_at
+        # being set is what makes snapshot_is_stale stop treating this row as outstanding
+        # work, which is what ends the re-queue loop (10.5).
+        top_song.ingest_attempts = (top_song.ingest_attempts or 0) + 1
+        # Truncated: this is shown to the user and a spotdl traceback can run to
+        # kilobytes. The full text is in the container logs.
+        top_song.ingest_error = str(error)[:500]
+        if top_song.ingest_attempts >= INGEST_MAX_ATTEMPTS:
+            top_song.ingest_failed_at = datetime.now()
+            logger.warning(
+                "Giving up on %s after %d attempts", top_song.track_title, top_song.ingest_attempts
+            )
+        db.commit()
 
     @staticmethod
     def _fire_first_success(callback, db: Session) -> bool:
@@ -229,18 +289,48 @@ class SpotifyIngestService:
             return False
 
     def snapshot_is_stale(self, user: User, db: Session) -> bool:
-        # "Stale" means the snapshot needs a (re)build — it's empty, or a prior
-        # ingest didn't finish processing every row. Pool exhaustion (all rows
-        # used as query seeds) is deliberately NOT stale: query_recommendations
-        # recycles the existing candidates instead of re-fetching from Spotify (A6).
-        result = db.query(
-            func.count().label("total"),
-            func.count(UserTopSong.song_id).label("processed"),
-        ).filter(UserTopSong.user_id == user.id).one()
-
-        if result.total == 0:
+        # "Stale" means the snapshot needs a (re)build — it's empty, or there is still
+        # unprocessed work worth doing. Pool exhaustion (all rows used as query seeds) is
+        # deliberately NOT stale: query_recommendations recycles the existing candidates
+        # instead of re-fetching from Spotify (A6).
+        #
+        # A seed that has exhausted INGEST_MAX_ATTEMPTS does NOT count as outstanding
+        # work (10.5). Before this, an unfetchable track kept the snapshot stale forever,
+        # so every request re-fetched top tracks from Spotify, rewrote the seed set and
+        # re-ran the whole failing ingest — an infinite loop that cost a Spotify API call
+        # and ten downloads per iteration and never surfaced anywhere, because the
+        # failures are warnings rather than exceptions.
+        total = db.query(func.count()).select_from(UserTopSong).filter(
+            UserTopSong.user_id == user.id
+        ).scalar()
+        if total == 0:
             return True
-        return result.processed < result.total
+
+        pending = db.query(func.count()).select_from(UserTopSong).filter(
+            UserTopSong.user_id == user.id,
+            UserTopSong.song_id == None,
+            UserTopSong.ingest_failed_at == None,
+        ).scalar()
+        return pending > 0
+
+    @staticmethod
+    def usable_seed_count(user: User, db: Session) -> int:
+        # Seeds that actually have an embedded Song behind them, i.e. what
+        # query_recommendations can pick a query song from. Zero means it must not be
+        # called at all: it would reach `query_entry.song` on None and raise (10.5).
+        return db.query(func.count()).select_from(UserTopSong).filter(
+            UserTopSong.user_id == user.id,
+            UserTopSong.song_id != None,
+        ).scalar()
+
+    @staticmethod
+    def failed_seed_count(user: User, db: Session) -> int:
+        # Seeds retired after INGEST_MAX_ATTEMPTS, so the user can be told how many of
+        # their tracks couldn't be processed rather than silently getting a thinner pool.
+        return db.query(func.count()).select_from(UserTopSong).filter(
+            UserTopSong.user_id == user.id,
+            UserTopSong.ingest_failed_at != None,
+        ).scalar()
 
     @staticmethod
     def _dedupe_by_artist(pool: list, limit: int) -> list[Song]:
@@ -312,6 +402,18 @@ class SpotifyIngestService:
                 )
                 .first()
             )
+        if query_entry is None:
+            # No seed has a Song behind it — every one either failed or was never
+            # processed. Before 10.5 this was unreachable, because an unprocessed
+            # snapshot always counted as stale and got re-ingested instead. Now that a
+            # failed seed is terminal, it IS reachable, and without this guard the next
+            # line raises AttributeError on None and the endpoint 500s — which the
+            # frontend swallows silently, leaving a blank page and no explanation.
+            # Callers check usable_seed_count() first; this is the backstop.
+            raise NoUsableSeedsError(
+                f"user {user.id} has no seed with a processed song to query from"
+            )
+
         query_song = query_entry.song
         query_genre = query_entry.genre
         query_entry.used_as_query = True

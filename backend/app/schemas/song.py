@@ -11,6 +11,12 @@ class RecsResponse(BaseModel):
     recommendations: list["SongResponse"] = []
     locked_for_today: bool = False
     next_dispatch_at: str | None = None
+    # How many of the user's seeds could not be processed after INGEST_MAX_ATTEMPTS
+    # (10.5). An extra field rather than a new `status` value on purpose: the frontend
+    # branches on `status === "processing"` and treats everything else as ready, so an
+    # unrecognized status would fall through and render "You're all caught up" over an
+    # empty list — precisely the wrong thing to tell someone whose seeds failed.
+    unprocessed_seeds: int = 0
 
 
 class SongResponse(BaseModel):
