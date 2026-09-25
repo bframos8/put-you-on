@@ -264,14 +264,18 @@ class TestRecycleWhenExhausted:
 
 
 class TestSnapshotIsStale:
-    """A6: pool exhaustion is no longer 'stale' — only empty or unfinished."""
+    """A6: pool exhaustion is no longer 'stale' — only empty or unfinished.
+    10.5: a seed retired after INGEST_MAX_ATTEMPTS is not unfinished work either."""
 
-    def _db(self, total, processed):
+    def _db(self, total, pending):
+        # snapshot_is_stale issues two scalar counts: the total, then the rows still
+        # worth working on (song_id NULL and not yet terminally failed). Returned in
+        # call order, and the second is never reached when total is 0.
         db = MagicMock()
-        row = MagicMock()
-        row.total = total
-        row.processed = processed
-        db.query.return_value.filter.return_value.one.return_value = row
+        db.query.return_value.select_from.return_value.filter.return_value.scalar.side_effect = [
+            total,
+            pending,
+        ]
         return db
 
     def test_empty_snapshot_is_stale(self):
@@ -280,10 +284,23 @@ class TestSnapshotIsStale:
 
     def test_unprocessed_rows_are_stale(self):
         svc = make_service()
-        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 7)) is True
+        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 3)) is True
 
     def test_all_processed_and_queried_is_not_stale(self):
         # Formerly all_queried → stale (rebuild). Now it's not stale; the seed
         # pool is recycled by query_recommendations instead.
         svc = make_service()
-        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 10)) is False
+        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 0)) is False
+
+    def test_terminally_failed_seeds_are_not_stale(self):
+        # The loop-breaker (10.5). Ten seeds, none processed, but all of them have
+        # exhausted INGEST_MAX_ATTEMPTS, so pending is 0 and the snapshot must NOT be
+        # rebuilt. Before this, an unfetchable track kept it stale forever and every
+        # request re-fetched from Spotify and re-ran the whole failing ingest.
+        svc = make_service()
+        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 0)) is False
+
+    def test_partial_failure_still_stale_while_attempts_remain(self):
+        # Seven failed terminally, three are still eligible to retry → still work to do.
+        svc = make_service()
+        assert svc.snapshot_is_stale(MagicMock(id=1), self._db(10, 3)) is True

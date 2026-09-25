@@ -32,7 +32,9 @@ def _run_process_top_tracks(user_id: int, ingest_service: SpotifyIngestService, 
         db.close()
 
 
-def _dispatch_response(query_song: Song, results: list[Song], locked: bool) -> RecsResponse:
+def _dispatch_response(
+    query_song: Song, results: list[Song], locked: bool, unprocessed_seeds: int = 0
+) -> RecsResponse:
     return RecsResponse(
         status="ready",
         query_title=query_song.title,
@@ -40,6 +42,7 @@ def _dispatch_response(query_song: Song, results: list[Song], locked: bool) -> R
         recommendations=[SongResponse.from_song(s) for s in results],
         locked_for_today=locked,
         next_dispatch_at=next_midnight_pst().isoformat() if locked else None,
+        unprocessed_seeds=unprocessed_seeds,
     )
 
 
@@ -47,12 +50,30 @@ def _dispatch_response(query_song: Song, results: list[Song], locked: bool) -> R
 @limiter.limit("30/minute", key_func=session_key)
 async def get_status(
     request: Request,
+    db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    ingest_service: SpotifyIngestService = Depends(get_ingest_service),
 ):
-    processing_users = request.app.state.processing_users
-    if user.id in processing_users:
+    # Derived from the database, not only from app.state.processing_users (10.5).
+    # That set is per-process and per-container: it is lost on every deploy, and a
+    # second uvicorn worker would answer "ready" for an ingest it never started.
+    #
+    # The important part is what "ready" means. It must mean "a dispatch can be
+    # produced", NOT "the queue is empty". Conflating those is what produced the
+    # re-queue loop: with every seed failed the queue was empty, /status said ready,
+    # the frontend asked for recs, the snapshot was still stale, and the whole failing
+    # ingest ran again.
+    if user.id in request.app.state.processing_users:
         return {"status": "processing"}
-    return {"status": "ready"}
+    if ingest_service.usable_seed_count(user, db) > 0:
+        return {"status": "ready"}
+    if ingest_service.snapshot_is_stale(user, db):
+        # Work is genuinely outstanding — either nothing has been fetched yet, or seeds
+        # are waiting on an ingest that is not running in this process.
+        return {"status": "processing"}
+    # Seeds exist, none are usable, and none are still eligible to retry. Terminal:
+    # keep polling and the spinner never stops.
+    return {"status": "no_seeds"}
 
 
 @router.get("/song_recs/")
@@ -93,8 +114,23 @@ async def get_recs(
         )
         return RecsResponse(status="processing")
 
+    # Guard before calling query_recommendations (10.5). The snapshot can now be
+    # not-stale while holding zero usable seeds — every one failed terminally — and in
+    # that state query_recommendations has no seed to pick and raises. Returning an
+    # honest terminal status beats a 500 the frontend silently swallows.
+    if ingest_service.usable_seed_count(user, db) == 0:
+        return RecsResponse(
+            status="no_seeds",
+            unprocessed_seeds=ingest_service.failed_seed_count(user, db),
+        )
+
     query_song, results = ingest_service.query_recommendations(user, db)
-    return _dispatch_response(query_song, results, locked=not DAILY_LIMIT_BYPASS)
+    return _dispatch_response(
+        query_song,
+        results,
+        locked=not DAILY_LIMIT_BYPASS,
+        unprocessed_seeds=ingest_service.failed_seed_count(user, db),
+    )
 
 
 @router.get("/top_tracks/")

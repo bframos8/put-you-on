@@ -1405,6 +1405,69 @@ is the last thing you wire because it automates a process you've already proven 
   > `/api/` and `/health`, since `add_header` appends). **CSP deliberately left out:** the
   > backend's `default-src 'none'` is right for JSON and would break every script, style,
   > font and image on a Next.js page. A real frontend policy is its own pass.
+  > **Partly done 2026-09-25, and it found a LAUNCH BLOCKER.**
+  >
+  > **Passed**, with a real second user logging in on the real domain: Spotify OAuth
+  > round-trip (`/auth/spotify/login` 307 → `/auth/me` 401 → 200), 10 recommendations
+  > dispatched with 10 distinct artists, the live request confirmed hitting the HNSW
+  > index (`idx_scan` 35 → 36), zero backend errors, and the licensed fonts serving 200
+  > — which incidentally proves the private-fonts-repo pipeline from A.3 end to end in
+  > production.
+  >
+  > **BLOCKER: the audio download is broken on EC2, so no new user can be onboarded.**
+  > The ML half is fine — models load in 0.3 s, peak RSS 377 MB against the 1200 MB cap,
+  > failures degrade gracefully — but every download fails:
+  >
+  > ```
+  > ERROR: [youtube] Sign in to confirm you're not a bot.
+  >        Use --cookies-from-browser or --cookies for the authentication.
+  > ```
+  >
+  > YouTube bot-challenges this IP. It has **never worked on this box**: the last
+  > successful ingest was 2026-06-10, before Phase 6 built this instance. Existing users
+  > are unaffected because their snapshots were processed back then; only new users break.
+  >
+  > **How it breaks (corrected 2026-09-25 — an earlier draft of this note had the
+  > mechanism wrong).** It is not a stuck flag: `_run_process_top_tracks`'s `finally`
+  > ([songs.py:30](../backend/app/api/v1/songs.py#L30)) *does* clear `processing_users`.
+  > It is an **infinite re-queue loop**. Every download fails → `process_top_tracks`
+  > returns normally → the flag clears → `/status` says "ready" → the frontend
+  > immediately calls `/song_recs/` → `snapshot_is_stale` is still true (0 processed of
+  > 10) → it re-fetches top tracks from Spotify, wipes and rewrites the seed set, and
+  > re-queues the whole failing ingest. Forever.
+  >
+  > Each iteration costs one Spotify `me/top/tracks` call, ten spotdl attempts against
+  > the flagged IP, and a full DELETE+INSERT of the user's seeds. The cycle is the length
+  > of one pass (~1-4 min), so the `2/minute` limit on `get_recs` never even trips. The
+  > user sees the "Building your drop" spinner, with a brief flash of an empty carousel
+  > between iterations. Nothing reaches Sentry, because these are `logger.warning`, not
+  > exceptions — which is exactly why it went unnoticed for three months.
+  >
+  > **Ruled out by measurement, not guesswork:**
+  >
+  > | Hypothesis | Verdict |
+  > |---|---|
+  > | yt-dlp outdated | No. 2026.8.19 installed *is* newest on PyPI; master build identical; still blocked |
+  > | Missing Deno JS runtime (spotdl hints at it) | No. Installed it, still 0/2 |
+  > | Alternative yt-dlp player clients | No. All 7 blocked (`tv`, `ios`, `mweb`, `web_embedded`, `android_vr`, `tv_embedded`, `web_safari`) |
+  > | Other spotdl audio providers | No. `soundcloud`/`piped` route through yt-dlp anyway; `bandcamp` genuinely lacks commercial tracks |
+  > | Spotify `preview_url` (would skip YouTube entirely) | Not available — deprecated for new apps late 2024 |
+  >
+  > Not a blanket IP ban: 1 of 5 videos succeeded, so it is reputation-based and will
+  > fail *intermittently*, which is harder to operate than a clean failure.
+  >
+  > **Options, with plumbing verified:** spotdl supports `--proxy` (HTTP only — confirmed
+  > reaching the download layer: it logs `Setting proxy server: ...`), `--cookie-file`,
+  > and `--yt-dlp-args`. Current direction is a **residential HTTP proxy**, billed per
+  > GB. Note `_download` fetches 320 kbps stereo while `_load_audio` immediately
+  > resamples to **16 kHz mono**, so ~5x of the bandwidth a per-GB proxy would bill for is
+  > discarded unused; `--bitrate` goes down to `8k` and `--format` supports `opus`.
+  > Verify embeddings are unaffected (compare cosine distance at two bitrates) before
+  > lowering it, since the corpus was embedded from higher-quality audio.
+  >
+  > **Worth fixing independently of the download:** the app should surface "could not
+  > process your seeds" instead of spinning forever. A proxy reduces failures but cannot
+  > eliminate them.
   **How:** Full Spotify OAuth round-trip on the real domain, a top-tracks fetch, and one ML
   ingest/classify call. Check security headers + HSTS and an SSL Labs scan.
   **Why:** OAuth, CORS, HSTS, and TLS only fully exercise against the real origin — this is
@@ -1464,6 +1527,101 @@ is the last thing you wire because it automates a process you've already proven 
   capped at 5 per week for the same name.
   **Why:** Brief downtime is acceptable, but an *unrecoverable* deploy is not. A one-page
   runbook turns a 2 a.m. incident into a checklist.
+
+- [x] **10.5 Stop the failed-ingest loop and tell the user the truth. (launch gate)**
+  > **Done 2026-09-25.** `INGEST_MAX_ATTEMPTS = 3`: a seed that fails three times sets
+  > `ingest_failed_at` and stops counting as outstanding work.
+  >
+  > **A fifth change was needed that the plan missed.** The cap is worthless on its own,
+  > because `add_user_top_songs` was an unconditional delete-then-insert — a failed seed
+  > came back with `ingest_attempts = 0` on every pass and could never reach three. It
+  > now keeps queue state for tracks that survive into the new snapshot and deletes only
+  > departed ones, which also stops A6 losing its place in the `used_as_query` walk.
+  >
+  > **Migration verified against a scratch database on the prod RDS instance** (same
+  > engine and pgvector version), including the case that actually matters: applied to a
+  > table pre-populated with 20 rows, all backfilled to `0` with no NULLs, confirming the
+  > `server_default`. Upgrade, `alembic check` and downgrade all clean. The first attempt
+  > at this test proved nothing — `docker compose run backend` uses the *deployed* image,
+  > so the new migration was not in it and only the baseline ran. Mount the files.
+  >
+  > `/status` is now derived from the database and returns a third value, `no_seeds`.
+  > The frontend stops polling on anything that is not `processing`, so a terminal state
+  > cannot spin forever, and `unprocessed_seeds` is deliberately **not** cached in
+  > localStorage — a locked dispatch replays all day and would keep reporting a failure
+  > after it was fixed.
+  **How:** Four changes that must land *together* — the ordering is not optional, because
+  any one of them alone makes things worse:
+  1. **Migration** (hand-written, not autogenerated — see 10.1's drift note): add
+     `ingest_attempts INTEGER NOT NULL SERVER_DEFAULT '0'`, `ingest_failed_at`,
+     `ingest_error`, `claimed_at` to `user_top_songs`. `server_default` is required or
+     `add_column` on a non-empty table fails. No partial index: the table has ~20 rows
+     and no index beyond the PK today.
+  2. **`snapshot_is_stale` treats `ingest_failed_at IS NOT NULL` as terminal.** This is
+     what breaks the loop — and it is also what protects the new columns, since
+     `add_user_top_songs` ([:118](../backend/app/services/spotify_ingest_service.py#L118))
+     is an unconditional wipe-and-replace that only runs when the snapshot is stale.
+  3. **Two guards against the 500 this otherwise creates.** With no usable seed,
+     `query_recommendations` reaches `query_song = query_entry.song` on `None` and
+     raises `AttributeError` → 500, which the frontend silently swallows
+     (`song-rec-carousel.tsx:155` `if (!res.ok) return;`). Guard in `get_recs` *and* in
+     `query_recommendations`.
+  4. **`/status` derives from the database, not `app.state.processing_users`.** That set
+     is per-process and lost on every deploy; "ready" must mean "a dispatch can be
+     produced", not "the queue is empty" — conflating those is what makes the loop.
+  **Why:** Today a new user costs a Spotify API call, ten failed downloads and a seed-set
+  rewrite every few minutes, forever, invisibly. Fixing only the flag solves the wrong
+  problem; fixing only staleness converts the loop into a silent 500.
+  > **Also decide an un-terminal policy.** Once rows are terminal the snapshot is never
+  > stale again, so a user whose 7 of 10 tracks failed keeps recycling the other 3
+  > forever and `already_recommended` steadily eats their candidate space. Either expire
+  > `ingest_failed_at` after N days / under a max attempt count, or accept it and say so.
+
+- [ ] **10.6 Move ingest to a worker on a residential IP (unblocks new users).**
+  **How:** A new top-level `worker/` runs on the Mac mini that already runs
+  `data_pipeline`. It polls an authenticated endpoint for pending seeds, downloads and
+  classifies and embeds locally, and POSTs back `{genre, embedding[1280]}`. Behind
+  `INGEST_WORKER_ENABLED`, **default off**. RDS stays private and the worker gets no AWS
+  or database credentials.
+  **Why:** 10.3 established that YouTube bot-blocks this datacenter IP and that no
+  configuration change fixes it. A residential IP does.
+  > **Constraints found while verifying the design, all load-bearing:**
+  > - **The flag must not go on before 10.5.** In worker mode `process_top_tracks`
+  >   returns in milliseconds, so the 10.5 loop tightens from minutes to ~5 s and the
+  >   `2/minute` limit on `get_recs` becomes the bound — a new user's first experience
+  >   becomes a 429 on a blank page.
+  > - **Do not keep `processing_users.add` in the worker path** without the background
+  >   task that clears it, or you create the permanent stuck-spinner that today's code
+  >   does *not* have.
+  > - **The worker must not generate the dispatch.** That would spend the user's daily
+  >   allotment unprompted, stamp `dispatch_date` at whatever time it finished, and run
+  >   outside the `SELECT ... FOR UPDATE` in `get_recs` that serializes dispatch
+  >   generation. The worker fills seeds; `get_recs` still decides.
+  > - **Validate the embedding at the boundary.** `json.loads` accepts bare `NaN` and
+  >   `Infinity`, and pgvector rejects them server-side as a 500 mid-transaction. Check
+  >   length 1280, all finite, non-zero norm, and the genre against the 22-genre
+  >   vocabulary. A zero vector makes cosine distance undefined.
+  > - **Poisoned seeds cross users.** `Song.spotify_track_id` is unique and
+  >   `process_top_tracks`'s fast path reuses an existing Song by track id for *every*
+  >   user, so one bad embedding for a popular track becomes the query seed for everyone
+  >   who has it. It can never be recommended (`is_candidate=False`) but it steers whole
+  >   dispatches.
+  > - **Claims need atomicity and expiry:** `UPDATE ... WHERE id IN (SELECT ... FOR
+  >   UPDATE SKIP LOCKED) RETURNING`, plus a timeout, or a worker that dies mid-job
+  >   leaves a row that is neither pending nor failed.
+  > - **Secrets do leave the AWS boundary.** The worker needs `SPOTIFY_CLIENT_ID` /
+  >   `_SECRET` for spotdl plus the worker token, copied to the Mac by hand with no
+  >   rotation story. "No AWS or DB credentials" is true; "no secrets" is not.
+  > - **`deploy/ssm-seed.sh` silently skips keys not in its allowlists** (exit 0, one
+  >   stderr line), so the new parameters must be added there or the backend boots
+  >   tokenless.
+  > - **Share code, don't copy the model.** `backend/app/models/` already has a
+  >   byte-identical twin in `data_pipeline/models/`; a third copy is not needed. The
+  >   worker can import `AudioGenreClassifier` via `PYTHONPATH=backend` (`app` is a
+  >   namespace package importing only numpy/essentia), and duplicate only the three
+  >   short audio helpers with the mirror comment this codebase already uses.
+  > - **Collides with 11.1's A6**, which rewrites the same `get_recs` block to retire the
+  >   Spotify login. Decide the order before starting either.
 
 ---
 

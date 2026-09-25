@@ -24,6 +24,9 @@ type RecsResponse = {
   recommendations: Song[];
   locked_for_today: boolean;
   next_dispatch_at: string | null;
+  // How many of the user's seed tracks couldn't be processed. Hand-maintained to match
+  // backend/app/schemas/song.py — nothing generates this type from the API.
+  unprocessed_seeds: number;
 };
 
 const DISPATCH_CACHE_KEY = "pyo:recs";
@@ -39,7 +42,9 @@ function readCachedDispatch(): RecsResponse | null {
       window.localStorage.removeItem(DISPATCH_CACHE_KEY);
       return null;
     }
-    return data;
+    // Restored as 0 because writeCachedDispatch strips it, and older cache entries
+    // predate the field entirely — without this it reads back undefined.
+    return { ...data, unprocessed_seeds: 0 };
   } catch {
     window.localStorage.removeItem(DISPATCH_CACHE_KEY);
     return null;
@@ -50,7 +55,20 @@ function writeCachedDispatch(data: RecsResponse) {
   if (typeof window === "undefined") return;
   if (data.status !== "ready" || !data.locked_for_today) return;
   try {
-    window.localStorage.setItem(DISPATCH_CACHE_KEY, JSON.stringify(data));
+    // Listed field by field rather than spread, so caching is opt-in. This entry is
+    // replayed on every mount until midnight, so anything live that leaks in here keeps
+    // being shown long after it stopped being true — which is exactly why
+    // unprocessed_seeds is absent: a cached failure notice would go on telling the user
+    // their tracks failed for the rest of the day, including after the cause was fixed.
+    const dispatch: Omit<RecsResponse, "unprocessed_seeds"> = {
+      status: data.status,
+      query_title: data.query_title,
+      query_artist: data.query_artist,
+      recommendations: data.recommendations,
+      locked_for_today: data.locked_for_today,
+      next_dispatch_at: data.next_dispatch_at,
+    };
+    window.localStorage.setItem(DISPATCH_CACHE_KEY, JSON.stringify(dispatch));
   } catch {
     // localStorage unavailable (private mode / quota) — silently skip
   }
@@ -132,7 +150,10 @@ export function SongRecCarousel() {
       );
       if (!res.ok) return;
       const data = await res.json();
-      if (data.status === "ready") {
+      // Stop on anything that is not "processing", rather than only on "ready".
+      // Polling used to continue for any unrecognized status, so a terminal state like
+      // "no_seeds" would spin forever — nothing else bounds this interval (10.5).
+      if (data.status !== "processing") {
         stopPolling();
         setProcessing(false);
         fetchRecsRef.current();
@@ -207,6 +228,29 @@ export function SongRecCarousel() {
     );
   }
 
+  // None of the user's seed tracks could be processed, and none are still worth
+  // retrying. Its own branch on purpose: without it this falls through to "You're all
+  // caught up", which is the wrong thing to tell someone whose tracks all failed (10.5).
+  if (recs && recs.status === "no_seeds") {
+    return (
+      <div className="flex flex-col items-start py-10">
+        <span className="label text-white/45">Nothing to go on yet</span>
+        <p className="display text-4xl md:text-5xl leading-[0.95] mt-3 max-w-[22ch] text-white">
+          We couldn&rsquo;t <span className="ink-pink">read your tracks.</span>
+        </p>
+        <p className="font-body text-[0.95rem] text-white/55 mt-3 max-w-md leading-relaxed">
+          {recs.unprocessed_seeds > 0
+            ? `${recs.unprocessed_seeds} of your top tracks couldn't be processed, so there's nothing to match against yet.`
+            : "We couldn't process any of your top tracks, so there's nothing to match against yet."}{" "}
+          Try again later, or come back once you&rsquo;ve listened to something new.
+        </p>
+        <div className="mt-6">
+          <RefreshButton retryIn={retryIn} lockedForToday={false} onRefresh={fetchRecs} />
+        </div>
+      </div>
+    );
+  }
+
   if (recs && recs.recommendations.length === 0) {
     return (
       <div className="flex flex-col items-start py-10">
@@ -253,6 +297,15 @@ export function SongRecCarousel() {
             by{" "}
             <span className="text-white font-semibold">{recs?.query_artist}</span>
           </p>
+          {/* Non-fatal notice. The drop still built from the seeds that worked, so this
+              sits quietly under the header rather than replacing the page. */}
+          {(recs?.unprocessed_seeds ?? 0) > 0 && (
+            <p className="font-body text-[0.9rem] text-white/50 mt-1">
+              {recs?.unprocessed_seeds === 1
+                ? "1 of your top tracks couldn't be processed today."
+                : `${recs?.unprocessed_seeds} of your top tracks couldn't be processed today.`}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <div className="label num text-white/40">

@@ -109,6 +109,16 @@ class UserTopSong(Base):
     snapshot_at = Column(DateTime, default=datetime.now)
     used_as_query = Column(Boolean, default=False, nullable=False)
 
+    # Ingest queue state (10.5). A seed whose audio can't be fetched used to stay
+    # song_id IS NULL forever, which snapshot_is_stale reads as "rebuild me" — an
+    # infinite re-ingest loop. These let a failure become terminal after INGEST_MAX_ATTEMPTS.
+    # server_default mirrors the migration: without it the two silently drift, because
+    # alembic/env.py doesn't set compare_server_default so autogenerate never compares them.
+    ingest_attempts = Column(Integer, default=0, server_default="0", nullable=False)
+    # NULL means "still eligible to retry". snapshot_is_stale keys off exactly this.
+    ingest_failed_at = Column(DateTime)
+    ingest_error = Column(Text)
+
     user = relationship("User", back_populates="top_songs")
     song = relationship("Song", back_populates="user_top_songs")
 
