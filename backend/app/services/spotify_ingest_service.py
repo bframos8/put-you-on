@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import Request
-from sqlalchemy import func, or_, text
+from sqlalchemy import and_, exists, func, or_, text
 
 import essentia
 import numpy as np
@@ -316,10 +316,26 @@ class SpotifyIngestService:
         query_genre = query_entry.genre
         query_entry.used_as_query = True
 
-        already_recommended = (
-            db.query(UserRecommendation.song_id)
-            .filter(UserRecommendation.user_id == user.id)
-            .subquery()
+        # Exclude anything this user has already been given. NOT EXISTS rather than
+        # `Song.id.not_in(subquery)`, and the difference is not stylistic: `NOT IN`
+        # against a subquery cannot become an anti-join, because SQL's NULL semantics
+        # mean one NULL in the subquery would make the whole predicate unknown. So
+        # Postgres compiles it to a hashed SubPlan, and the distorted row estimate
+        # that comes with it was enough to push the planner off the HNSW index and
+        # onto a sequential scan for every large genre. NOT EXISTS is a true
+        # anti-join, and the planner then picks the index on merit.
+        #
+        # Measured on prod, warm, per genre (2026-09-25):
+        #   latin   NOT IN -> seq 81 ms / 71,715 buffers | NOT EXISTS -> HNSW 9.0 ms / 3,142
+        #   blues   NOT IN -> seq 85 ms / 67,889 buffers | NOT EXISTS -> HNSW 9.9 ms / 3,613
+        #   reggae  NOT IN -> seq 75 ms / 63,742 buffers | NOT EXISTS -> HNSW 6.2 ms / 1,346
+        # The buffer column is the one that matters: the instance cannot cache the
+        # table, so buffer traffic is what turns into disk reads in production.
+        already_recommended = ~exists().where(
+            and_(
+                UserRecommendation.user_id == user.id,
+                UserRecommendation.song_id == Song.id,
+            )
         )
 
         # Each row carries its album's artist_id so we can dedupe by artist.
@@ -331,7 +347,7 @@ class SpotifyIngestService:
             .options(selectinload(Song.album))
             .filter(Song.is_candidate == True)
             .filter(Song.id != query_song.id)
-            .filter(Song.id.not_in(already_recommended))
+            .filter(already_recommended)
             .order_by(Song.embedding.cosine_distance(query_song.embedding))
         )
 
