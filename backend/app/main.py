@@ -35,7 +35,7 @@ from slowapi.errors import RateLimitExceeded
 from .core.daily import DAILY_LIMIT_BYPASS
 from .db.database import engine
 from .services.spotify_ingest_service import SpotifyIngestService
-from .api.v1 import auth, health, songs
+from .api.v1 import auth, health, ingest, songs
 from .core.limiter import limiter
 
 
@@ -110,3 +110,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(auth.router, prefix = "/api/v1")
 app.include_router(songs.router, prefix = "/api/v1")
+# Worker queue (10.6). Every route is gated on INGEST_WORKER_TOKEN and answers 404
+# while it is unset, so mounting it unconditionally exposes nothing until the
+# parameter is seeded in SSM.
+app.include_router(ingest.router, prefix = "/api/v1")

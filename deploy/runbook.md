@@ -198,6 +198,55 @@ unpushed local state. The database is unaffected, it is RDS.
 
 ---
 
+## The ingest worker
+
+The audio download happens on a machine outside AWS (`worker/`, gameplan 10.6), because
+YouTube bot-blocks the instance's IP. Two symptoms point here.
+
+**Users stuck on "Building your drop".** A worker that is not running produces no errors
+anywhere — the app just has seeds nobody claims, which looks exactly like work in
+progress. Check the worker process on the Mac first; its log line is `Claimed N seed(s)`.
+Then check the queue:
+
+```sql
+SELECT count(*) FILTER (WHERE song_id IS NULL AND ingest_failed_at IS NULL) AS pending,
+       count(*) FILTER (WHERE claimed_at IS NOT NULL AND song_id IS NULL) AS claimed,
+       count(*) FILTER (WHERE ingest_failed_at IS NOT NULL) AS failed
+FROM user_top_songs;
+```
+
+`pending` high and `claimed` zero means nothing is working the queue. A stuck `claimed`
+row clears itself after the 15-minute lease.
+
+**Turning the worker off** is one parameter: set `INGEST_WORKER_ENABLED` to anything but
+`true` (or delete it) and redeploy. The backend goes back to doing the ingest itself,
+which on this instance means every download fails — but failures are now bounded, so it
+degrades to "no seeds" rather than looping. Clearing `INGEST_WORKER_TOKEN` additionally
+makes the whole `/api/v1/ingest/*` surface 404, which is the right move if the worker
+machine is lost or the token leaks.
+
+### Re-arming seeds that failed under an old download path
+
+A seed retires after `INGEST_MAX_ATTEMPTS` and nothing un-retires it, so users whose
+tracks failed while the download was broken stay stuck even after it is fixed. Run this
+**once, after the new path is live** — not before, or the still-deployed old code will
+re-fail the rows before the worker ever sees them:
+
+```sql
+UPDATE user_top_songs
+   SET ingest_failed_at = NULL, ingest_attempts = 0, ingest_error = NULL, claimed_at = NULL
+ WHERE song_id IS NULL
+   AND ingest_failed_at IS NOT NULL;
+```
+
+Scoped to rows that are both unprocessed and retired: it must not zero the attempt count
+of a seed that is mid-retry, and it must not touch a seed that already has a song.
+
+This is a manual patch, not a policy. The question 10.5 left open — whether terminal
+failures should expire on their own after N days — is still open.
+
+---
+
 ## Alarms, and what each one means
 
 All seven notify the SNS topic `putyouon-alerts` by email.

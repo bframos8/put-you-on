@@ -1,0 +1,22 @@
+# Ingest worker dependencies (gameplan 10.6).
+#
+# Pinned to the same versions the backend uses, deliberately: the worker computes
+# embeddings that are compared against a corpus embedded by the other two, so essentia
+# and numpy in particular must not drift. spotdl is here for the same reason it is in the
+# backend image — it is the download path.
+#
+# requests rather than httpx only because this is a small synchronous script; the app
+# uses httpx for its async client.
+essentia-tensorflow==2.1b6.dev1389
+numpy==2.4.2
+python-dotenv==1.2.1
+requests==2.32.5
+spotdl==4.5.2
+
+# NOT pinned, and with a floor rather than an equality. YouTube changes its player
+# constantly and yt-dlp is the thing that keeps up; an older release fails in ways that
+# look like a block but are not. 2026.03.03 could not download at all from a machine that
+# 2026.08.19 downloaded from in under a second. When downloads start failing, upgrade this
+# first. It arrives as a spotdl dependency either way; naming it here is what stops a
+# stale one being installed silently.
+yt-dlp>=2026.8.19

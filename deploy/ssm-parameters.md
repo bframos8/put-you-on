@@ -48,11 +48,21 @@ only to override.
 | `FRONTEND_URL` | String | ✅ | `https://putyouon.app`. |
 | `CORS_ALLOWED_ORIGINS` | String | ✅ | `https://putyouon.app`. |
 | `ENABLE_HSTS` | String | ✅ | `true` in prod (TLS terminates at nginx). |
+| `INGEST_WORKER_TOKEN` | SecureString | ➖ | Shared secret for `/api/v1/ingest/*` (10.6). **While unset, those routes answer 404** — that is the off switch for the whole surface. The worker machine holds the same value. |
+| `INGEST_WORKER_ENABLED` | String | ➖ | `true` hands the audio download to the external worker instead of the backend process (10.6). Leave unset until a worker is running and claiming; anything but `true` is off. |
 | `SENTRY_ENVIRONMENT` | String | optional | Defaults to `production`. |
 | `SENTRY_TRACES_SAMPLE_RATE` | String | optional | Defaults to `0.0` (errors only). |
 | `SPOTIFY_HTTP_TIMEOUT` | String | optional | Defaults to `10.0`. |
 | `OAUTH_STATE_TTL_SECONDS` | String | optional | Defaults to `600`. |
 | `LOG_LEVEL` | String | optional | Defaults to `INFO`. |
+
+> `INGEST_WORKER_TOKEN` and `INGEST_WORKER_ENABLED` are the only two parameters that are
+> meaningful **outside** this account: the token is copied by hand to the machine running
+> [`worker/`](../worker/), along with `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` which
+> spotdl needs there. That is a real cost of the 10.6 design and worth saying plainly —
+> "the worker holds no AWS or database credentials" is true, "the worker holds no secrets"
+> is not. Rotating the token in SSM locks the worker out on the next deploy, which is the
+> recovery path if that machine is ever lost.
 
 > The four `Required ✅ String` config params (`SPOTIFY_REDIRECT_URI`, `FRONTEND_URL`,
 > `CORS_ALLOWED_ORIGINS`, `ENABLE_HSTS`) are required in the operational sense: if omitted

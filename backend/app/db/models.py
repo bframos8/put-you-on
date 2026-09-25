@@ -119,6 +119,12 @@ class UserTopSong(Base):
     ingest_failed_at = Column(DateTime)
     ingest_error = Column(Text)
 
+    # Lease held by the external ingest worker (10.6). Written by Postgres `now()` at
+    # claim time and compared only in SQL, so it never has to agree with the clock on the
+    # worker's machine. NULL means unclaimed; an expired lease is reclaimable, which is
+    # what stops a worker that dies mid-job from parking a row forever.
+    claimed_at = Column(DateTime)
+
     user = relationship("User", back_populates="top_songs")
     song = relationship("Song", back_populates="user_top_songs")
 

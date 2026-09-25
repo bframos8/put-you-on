@@ -1578,8 +1578,98 @@ is the last thing you wire because it automates a process you've already proven 
   > `ingest_failed_at` after N days / under a max attempt count, or accept it and say so.
 
 - [ ] **10.6 Move ingest to a worker on a residential IP (unblocks new users).**
-  **How:** A new top-level `worker/` runs on the Mac mini that already runs
-  `data_pipeline`. It polls an authenticated endpoint for pending seeds, downloads and
+  > **Built and verified locally 2026-09-25; not yet deployed.** Migration
+  > [d4e5f6a7b8c9](../backend/alembic/versions/d4e5f6a7b8c9_ingest_claim.py) (`claimed_at`),
+  > a token-gated queue at [`/api/v1/ingest/*`](../backend/app/api/v1/ingest.py), and a new
+  > top-level [`worker/`](../worker/). `INGEST_WORKER_ENABLED` defaults off, so merging
+  > changes nothing in production until it is set.
+  >
+  > **The premise held, but not for the reason the plan assumed, and the difference
+  > matters.** The download does work from a residential connection — 8.65 MB in about a
+  > second, no proxy, no cookies, no bot challenge anywhere. But it did not work at first,
+  > and the two things that fixed it are configuration, not address:
+  >
+  > 1. **spotdl's own block detector is broken and lies.** spotdl 4.5.2 pre-flights by
+  >    searching YouTube Music for the single letter `"a"` **unfiltered**, then counting
+  >    results that survive its filter. That query currently returns exactly one album,
+  >    which has no `videoId`, so the count is zero and it aborts with *"You are blocked
+  >    by YouTube Music. Please use a VPN."* Seconds later, on the same machine, a real
+  >    song search returned 20 usable results with video ids. **The message is simply
+  >    wrong.** The check only runs when `youtube-music` is among the providers, so
+  >    `--audio youtube` skips it.
+  > 2. **yt-dlp needs a JavaScript runtime, and only enables Deno by default.** Without
+  >    one it warns that extraction is deprecated, falls back to a client whose formats
+  >    have no URLs, and dies on *"Requested format is not available"* — or picks a format
+  >    that then 403s. `--yt-dlp-args "--js-runtimes node"` fixes it.
+  >
+  > **And the version mattered more than anything else.** yt-dlp 2026.03.03 could not
+  > download from this machine at all; 2026.08.19 downloaded in under a second from the
+  > same IP, minutes apart. So `worker_requirements.txt` gives yt-dlp a **floor, not a
+  > pin** — a stale yt-dlp fails in ways indistinguishable from a block, and it arrives
+  > as a spotdl dependency whether or not it is named.
+  >
+  > **Read 10.3's table again in that light.** "Deno installed, still 0/2" was measured on
+  > the box that *also* returns "Sign in to confirm you're not a bot", so one blocker
+  > masked the other. The EC2 bot challenge is real and separate; what is no longer safe
+  > to assume is that a spotdl failure message names its own cause.
+  >
+  > **Verified end to end before merging**, because the last two items in this phase both
+  > shipped something a hand-written test had blessed and production had not:
+  > - Migration applied to a scratch pgvector 0.8.1 database, **with 20 rows already in
+  >   the table**, then `alembic check` (no drift), `downgrade -1`, and back up.
+  > - `claim_pending_seeds` against real Postgres: two successive claims returned disjoint
+  >   id sets, a lease backdated 20 minutes was reclaimed, and claimed rows still counted
+  >   as pending.
+  > - `complete_seed` twice on the same seed → `ok` then `already_done`, no second Song.
+  > - **The concurrent-create race**, driven with two sessions: another session inserted
+  >   the same `spotify_track_id` between the existence check and the flush. The
+  >   `begin_nested()` savepoint recovered, linked the seed to the existing song, left no
+  >   duplicate, and the outer transaction stayed usable. Without the savepoint this path
+  >   raises `InFailedSqlTransaction`.
+  > - `record_seed_failure` three times → terminal at the cap, claim released each time.
+  > - The live endpoints over HTTP: unset token → 404, wrong token → 401, correct → jobs.
+  >
+  > **Two defects found and fixed while building, both of which would have shipped:**
+  > - **`Field(allow_inf_nan=False)` on a `list[float]` rejects valid input.** On pydantic
+  >   2.12.5 it raises `TypeError: must be real number, not list` for every request. And
+  >   the obvious alternative, a `field_validator`, turns a bad embedding into a **500
+  >   rather than a 422**: the validation error carries the offending value in `input`,
+  >   and Starlette serializes with `json.dumps(..., allow_nan=False)`, so a NaN makes the
+  >   error response itself unserializable. The check is a plain function the endpoint
+  >   calls.
+  > - **`hmac.compare_digest` raises `TypeError` on non-ASCII `str`.** Starlette decodes
+  >   headers as latin-1, so `Authorization: Bearer <non-ascii>` would have been an
+  >   unhandled 500 and one Sentry event per probe. It compares bytes.
+  >
+  > **A credential leak found in existing code, deliberately NOT fixed here (out of
+  > scope, but it is in production now).** `_download` runs spotdl with `check=True`, and
+  > `CalledProcessError` stringifies the entire argv — including `--client-secret <value>`.
+  > `process_top_tracks` hands that string to `_record_failure`, which stores the first
+  > 500 characters in `user_top_songs.ingest_error`. The secret sits inside that window,
+  > so **every failed download on the box has been writing the Spotify client secret into
+  > the database** since 10.5. It is not currently sent to the browser (`RecsResponse`
+  > exposes only a count) but it is in the DB and in the container logs. The worker's own
+  > download does not use `check=True` for exactly this reason. Fix is one line in
+  > `_download`; do it as its own change.
+  >
+  > **Accepted costs, written down rather than solved:**
+  > - A dispatch generated from a partly-filled seed pool is **locked for the day**. Same
+  >   bargain `on_first_success` already makes, but the tail is now minutes, not seconds.
+  > - A worker that dies mid-job holds `/status` on `processing` for the full 15-minute
+  >   lease.
+  > - A worker that is not running is **invisible**: seeds nobody claims look exactly like
+  >   work in progress. Mitigated only by a log line (`Claimed N seed(s)`) and a runbook
+  >   entry, not by an alarm.
+  > - Every commit touching only `worker/` still triggers a full build and deploy: CI has
+  >   no path filter. Not worth a workflow change yet.
+  > - **Secrets leave AWS by hand.** The worker holds the Spotify client id/secret and the
+  >   worker token, with no rotation story beyond re-seeding SSM.
+  > - 10.5's open **un-terminal policy** question is still open. The re-arm is a documented
+  >   one-off SQL in [runbook.md](../deploy/runbook.md), to be run *after* the flag flips —
+  >   running it before means the still-deployed old code re-fails the rows first.
+  **How:** A new top-level `worker/` runs on a machine with a residential connection —
+  proven from a laptop first, with the Mac mini that already runs `data_pipeline` as its
+  permanent home in **11.4**. It polls an authenticated endpoint for pending seeds, downloads and
   classifies and embeds locally, and POSTs back `{genre, embedding[1280]}`. Behind
   `INGEST_WORKER_ENABLED`, **default off**. RDS stays private and the worker gets no AWS
   or database credentials.
@@ -1662,6 +1752,34 @@ is the last thing you wire because it automates a process you've already proven 
   minimal `needs_seeds` state — bundle A7 + B5 into adjacent merges if that gap matters.
   **Why:** Search-and-pick is the real onboarding once the cap is gone — Phase A without
   B leaves new users a dashboard with nothing to seed it.
+
+- [ ] **11.4 Give the ingest worker a permanent home on the Mac mini.**
+  **How:** 10.6 shipped the worker and it was first run from a laptop, by hand, which is
+  fine for proving the path and wrong as a permanent arrangement: a laptop sleeps, and a
+  sleeping worker is indistinguishable from a broken one. Move it to the Mac mini that
+  already runs `data_pipeline`:
+  1. Clone the repo (or reuse the existing checkout), build the venv from
+     [worker/worker_requirements.txt](../worker/worker_requirements.txt), and confirm a
+     JavaScript runtime is on PATH — `run.py` refuses to start without one.
+  2. Copy `INGEST_WORKER_TOKEN`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` into
+     `worker/.env`. These are the secrets that live outside AWS; there is still no
+     rotation story beyond re-seeding SSM and restarting.
+  3. Run it under **launchd**, not cron and not `nohup`: this is a long-lived process, so
+     it wants `KeepAlive` and `RunAtLoad` rather than a schedule. `data_pipeline`'s
+     `setup_cron.sh` is the wrong model here. Point `StandardOutPath` somewhere that gets
+     rotated.
+  4. Stop `caffeinate`-style workarounds from being load-bearing: set the mini to never
+     sleep, and verify the worker survives a reboot.
+  5. Decide whether the laptop stays as a second worker. It can — claims use
+     `FOR UPDATE SKIP LOCKED`, so two workers take disjoint batches safely — but two
+     machines holding the same secrets doubles that exposure for very little throughput.
+  **Why:** Until this lands, "new users can be onboarded" depends on a laptop being awake,
+  and the failure mode is silent: seeds accumulate unclaimed, `/status` says `processing`,
+  and nothing reaches Sentry. This is also the step that makes the `worker/` code worth
+  having — merged and off, it changes nothing.
+  > Deliberately **after** 11.1-11.3 rather than before: the worker is already useful from
+  > any machine that happens to be running it, so this is about durability, not capability.
+  > Pull it forward if new-user onboarding becomes urgent before Phase A ships.
 
 ---
 
