@@ -1405,6 +1405,57 @@ is the last thing you wire because it automates a process you've already proven 
   > `/api/` and `/health`, since `add_header` appends). **CSP deliberately left out:** the
   > backend's `default-src 'none'` is right for JSON and would break every script, style,
   > font and image on a Next.js page. A real frontend policy is its own pass.
+  > **Partly done 2026-09-25, and it found a LAUNCH BLOCKER.**
+  >
+  > **Passed**, with a real second user logging in on the real domain: Spotify OAuth
+  > round-trip (`/auth/spotify/login` 307 → `/auth/me` 401 → 200), 10 recommendations
+  > dispatched with 10 distinct artists, the live request confirmed hitting the HNSW
+  > index (`idx_scan` 35 → 36), zero backend errors, and the licensed fonts serving 200
+  > — which incidentally proves the private-fonts-repo pipeline from A.3 end to end in
+  > production.
+  >
+  > **BLOCKER: the audio download is broken on EC2, so no new user can be onboarded.**
+  > The ML half is fine — models load in 0.3 s, peak RSS 377 MB against the 1200 MB cap,
+  > failures degrade gracefully — but every download fails:
+  >
+  > ```
+  > ERROR: [youtube] Sign in to confirm you're not a bot.
+  >        Use --cookies-from-browser or --cookies for the authentication.
+  > ```
+  >
+  > YouTube bot-challenges this IP. It has **never worked on this box**: the last
+  > successful ingest was 2026-06-10, before Phase 6 built this instance. Existing users
+  > are unaffected because their snapshots were processed back then; only new users
+  > break, and they break *silently* — `process_top_tracks` logs a warning and continues,
+  > `on_first_success` never fires, `processing_users` is never cleared, so the user sits
+  > on a "processing" spinner forever. That silence is why this went unnoticed for three
+  > months.
+  >
+  > **Ruled out by measurement, not guesswork:**
+  >
+  > | Hypothesis | Verdict |
+  > |---|---|
+  > | yt-dlp outdated | No. 2026.8.19 installed *is* newest on PyPI; master build identical; still blocked |
+  > | Missing Deno JS runtime (spotdl hints at it) | No. Installed it, still 0/2 |
+  > | Alternative yt-dlp player clients | No. All 7 blocked (`tv`, `ios`, `mweb`, `web_embedded`, `android_vr`, `tv_embedded`, `web_safari`) |
+  > | Other spotdl audio providers | No. `soundcloud`/`piped` route through yt-dlp anyway; `bandcamp` genuinely lacks commercial tracks |
+  > | Spotify `preview_url` (would skip YouTube entirely) | Not available — deprecated for new apps late 2024 |
+  >
+  > Not a blanket IP ban: 1 of 5 videos succeeded, so it is reputation-based and will
+  > fail *intermittently*, which is harder to operate than a clean failure.
+  >
+  > **Options, with plumbing verified:** spotdl supports `--proxy` (HTTP only — confirmed
+  > reaching the download layer: it logs `Setting proxy server: ...`), `--cookie-file`,
+  > and `--yt-dlp-args`. Current direction is a **residential HTTP proxy**, billed per
+  > GB. Note `_download` fetches 320 kbps stereo while `_load_audio` immediately
+  > resamples to **16 kHz mono**, so ~5x of the bandwidth a per-GB proxy would bill for is
+  > discarded unused; `--bitrate` goes down to `8k` and `--format` supports `opus`.
+  > Verify embeddings are unaffected (compare cosine distance at two bitrates) before
+  > lowering it, since the corpus was embedded from higher-quality audio.
+  >
+  > **Worth fixing independently of the download:** the app should surface "could not
+  > process your seeds" instead of spinning forever. A proxy reduces failures but cannot
+  > eliminate them.
   **How:** Full Spotify OAuth round-trip on the real domain, a top-tracks fetch, and one ML
   ingest/classify call. Check security headers + HSTS and an SSL Labs scan.
   **Why:** OAuth, CORS, HSTS, and TLS only fully exercise against the real origin — this is
