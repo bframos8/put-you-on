@@ -1467,7 +1467,14 @@ is the last thing you wire because it automates a process you've already proven 
   >
   > **Worth fixing independently of the download:** the app should surface "could not
   > process your seeds" instead of spinning forever. A proxy reduces failures but cannot
-  > eliminate them.
+  > eliminate them. **Done in 10.5.**
+  >
+  > **Remaining, and this is the only thing keeping Phase 10 open (as of 2026-09-25):**
+  > - **The SSL Labs scan.** Independent of everything else; nothing blocks it.
+  > - **One real ML ingest.** Still impossible on this instance — the blocker 10.6 was
+  >   written to route around is fixed in code but not yet switched on. This half of the
+  >   smoke test passes when **11.4** does, and not before. Tick 10.3 then, with a real
+  >   new user's dispatch as the evidence.
   **How:** Full Spotify OAuth round-trip on the real domain, a top-tracks fetch, and one ML
   ingest/classify call. Check security headers + HSTS and an SSL Labs scan.
   **Why:** OAuth, CORS, HSTS, and TLS only fully exercise against the real origin — this is
@@ -1577,8 +1584,34 @@ is the last thing you wire because it automates a process you've already proven 
   > forever and `already_recommended` steadily eats their candidate space. Either expire
   > `ingest_failed_at` after N days / under a max attempt count, or accept it and say so.
 
-- [ ] **10.6 Move ingest to a worker on a residential IP (unblocks new users).**
-  > **Built and verified locally 2026-09-25; not yet deployed.** Migration
+- [x] **10.6 Move ingest to a worker on a residential IP (unblocks new users).**
+  > **Shipped and deployed 2026-09-25 (PR #24, merge `18441ce`).** Ticked for the system
+  > being built, deployed and verified in production — **not** for new users working yet.
+  > The flag is off and no worker is running, so nothing about production behaviour has
+  > changed. Turning it on is **11.4**, which must happen before 11.1.
+  >
+  > Verified against production after the deploy: image `18441ce`, `/health/ready` ready,
+  > `alembic_version = d4e5f6a7b8c9` with the `claimed_at` column present, and the queue
+  > endpoints answering **401** for a missing header, a wrong token and a wrong scheme.
+  > `INGEST_WORKER_ENABLED` is absent from the container's environment;
+  > `INGEST_WORKER_TOKEN` is present, which is what makes the routes exist at all.
+  >
+  > **Pre-migration snapshot `putyouon-db-pre-10-6-20260925-1358`.** Second real migration
+  > through the pipeline, again unattended and clean.
+  >
+  > One caveat on the 404-when-unset design, noticed in production: a **malformed body
+  > returns 422 before the auth dependency runs**, so with the token unset a malformed
+  > request would probably still reveal the route exists rather than 404. Inferred from the
+  > observed ordering, not verified with the token unset. It leaks route existence only.
+  >
+  > **The re-arm SQL in [runbook.md](../deploy/runbook.md) is currently a no-op**: both
+  > users are fully processed (20 rows, 20 with a song, 0 pending, 0 failed, 0 stored
+  > errors), so nothing has gone terminal. That changes the moment a new user logs in with
+  > the flag off — see 11.4's ordering warning.
+  >
+  > ---
+  >
+  > **Built and verified locally 2026-09-25, before the deploy.** Migration
   > [d4e5f6a7b8c9](../backend/alembic/versions/d4e5f6a7b8c9_ingest_claim.py) (`claimed_at`),
   > a token-gated queue at [`/api/v1/ingest/*`](../backend/app/api/v1/ingest.py), and a new
   > top-level [`worker/`](../worker/). `INGEST_WORKER_ENABLED` defaults off, so merging
@@ -1724,6 +1757,12 @@ is the last thing you wire because it automates a process you've already proven 
 > the live CI/CD pipeline**: every step lands as a PR → CI (8.1) → merge → build/push
 > (8.2) → deploy (8.3), under branch protection (8.4).
 
+> **Do 11.4 and 11.6 first, before 11.1.** Both are activation of things already built and
+> deployed, and both are cheap. 11.4 in particular is a prerequisite in substance if not on
+> paper: 11.1 exists to remove the ~25-user OAuth cap, i.e. to let more people sign up —
+> and until the worker is actually running, every one of those signups fails its ingest and
+> burns its seeds to terminal. Shipping identity before activating the worker is backwards.
+
 - [ ] **11.1 Ship Phase A (identity) through the pipeline, item by item.**
   **How:** Implement A1–A8 from that plan as individual PRs. **A1's migration is the
   first live exercise of the deploy's `alembic upgrade head` step** (8.3 step 4): it
@@ -1753,11 +1792,44 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Search-and-pick is the real onboarding once the cap is gone — Phase A without
   B leaves new users a dashboard with nothing to seed it.
 
-- [ ] **11.4 Give the ingest worker a permanent home on the Mac mini.**
-  **How:** 10.6 shipped the worker and it was first run from a laptop, by hand, which is
-  fine for proving the path and wrong as a permanent arrangement: a laptop sleeps, and a
-  sleeping worker is indistinguishable from a broken one. Move it to the Mac mini that
-  already runs `data_pipeline`:
+- [ ] **11.4 Turn the ingest worker on and prove it with a real new user. (Do this first.)**
+  > This is what 10.6 does not cover. 10.6 built, deployed and verified the machinery; the
+  > flag is off and no worker is running, so **new users are still blocked**. Until this
+  > item is done, nothing has actually been fixed for anybody.
+  **How:** Order matters, and getting it wrong costs a user their seeds.
+  1. **Start the worker before flipping the flag.** Any machine on a residential
+     connection: venv from [worker/worker_requirements.txt](../worker/worker_requirements.txt),
+     `worker/.env` filled in, a JavaScript runtime on PATH, then
+     `PYTHONPATH=backend python worker/run.py`. It will poll and find nothing, which is the
+     correct state — at the time of writing the queue is empty, both users fully processed.
+  2. **Then flip the flag and redeploy:**
+     ```sh
+     aws ssm put-parameter --name /putyouon/prod/INGEST_WORKER_ENABLED \
+       --type String --value true --overwrite
+     ```
+     SSM is only read at deploy time (5.2), so a deploy has to follow or nothing changes.
+  3. **Then have a new user log in** and watch the worker claim their seeds. This is the
+     ML-ingest half of **10.3**'s smoke test, which has never been able to pass on this
+     instance — the last successful ingest was 2026-06-10, before the box existed.
+  4. Confirm the dispatch that comes out is sane, and that `/status` moves
+     `processing → ready` rather than sticking.
+  > **The ordering warning, spelled out.** If a new user logs in while the flag is still
+  > off, the in-process path runs, all ten downloads fail against the blocked IP, each seed
+  > burns `INGEST_MAX_ATTEMPTS` and goes terminal, and that user is stuck until someone runs
+  > the re-arm SQL in [runbook.md](../deploy/runbook.md). That SQL is a no-op today only
+  > because nobody has signed up since 10.5 shipped. **Flip the flag before the next
+  > signup, not after.**
+  > **Also expect the first run to be slower than it looks.** Roughly 70 s per track
+  > measured, so a full ten-seed snapshot is ~12 minutes. The user gets a dispatch as soon
+  > as the first seed lands (`get_recs` falls through on a partly-filled pool), but that
+  > dispatch is **locked for the day** against a thin pool. Accepted in 10.6; worth
+  > watching once with real eyes before deciding it is fine.
+
+- [ ] **11.5 Give the ingest worker a permanent home on the Mac mini.**
+  **How:** 11.4 gets the worker running somewhere; this makes it durable. Running it by
+  hand from a laptop is fine for proving the path and wrong as a permanent arrangement: a
+  laptop sleeps, and a sleeping worker is indistinguishable from a broken one. Move it to
+  the Mac mini that already runs `data_pipeline`:
   1. Clone the repo (or reuse the existing checkout), build the venv from
      [worker/worker_requirements.txt](../worker/worker_requirements.txt), and confirm a
      JavaScript runtime is on PATH — `run.py` refuses to start without one.
@@ -1774,12 +1846,36 @@ is the last thing you wire because it automates a process you've already proven 
      `FOR UPDATE SKIP LOCKED`, so two workers take disjoint batches safely — but two
      machines holding the same secrets doubles that exposure for very little throughput.
   **Why:** Until this lands, "new users can be onboarded" depends on a laptop being awake,
-  and the failure mode is silent: seeds accumulate unclaimed, `/status` says `processing`,
-  and nothing reaches Sentry. This is also the step that makes the `worker/` code worth
-  having — merged and off, it changes nothing.
-  > Deliberately **after** 11.1-11.3 rather than before: the worker is already useful from
-  > any machine that happens to be running it, so this is about durability, not capability.
-  > Pull it forward if new-user onboarding becomes urgent before Phase A ships.
+  and the failure mode is silent: seeds accumulate unclaimed and `/status` says
+  `processing` indefinitely. Nothing alerts, so the only signal is the worker's own
+  `Claimed N seed(s)` log line (see the runbook's worker section).
+
+- [ ] **11.6 Turn Sentry on. Production has never reported an error.**
+  > **Not a new discovery — this is 1.3's "remaining (ops, not code)" and A.2's deliberate
+  > blank, finally coming due.** Confirmed 2026-09-25: `/putyouon/prod/SENTRY_DSN` does not
+  > exist (`ParameterNotFound`), so `main.py` skips `sentry_sdk.init` and **no error has
+  > ever left this deployment**.
+  >
+  > Worth doing now rather than later because the whole of Phase 10 turned on failures being
+  > invisible. The 10.3 write-up explains the three-month-old ingest loop by the failures
+  > being `logger.warning` rather than exceptions — true, but incomplete: a genuine
+  > exception would not have reached Sentry either. 10.6 adds a worker whose death is silent
+  > by construction. Error reporting is the cheapest thing on this list and the one that
+  > would have caught the most.
+  **How:** Create the Sentry project, then seed the DSN and redeploy — `SENTRY_DSN` is
+  already in `ssm-seed.sh`'s SecureString allowlist and
+  [prod.env.example](../deploy/prod.env.example), so no code or script change is needed:
+  ```sh
+  aws ssm put-parameter --name /putyouon/prod/SENTRY_DSN \
+    --type SecureString --value 'https://...' --overwrite
+  ```
+  Do **not** re-run `./deploy/ssm-seed.sh` for this: `deploy/prod.env` has drifted from SSM
+  (it holds a `SENTRY_DSN` but lacks the three `GRAFANA_*` keys), so a full re-seed would
+  push every stale value in that file over what is live. Then verify a real event arrives —
+  an unhandled exception from a throwaway endpoint, or `sentry_sdk.capture_message` from a
+  one-off `docker compose run`. An unverified DSN is the same as no DSN.
+  **Why:** `SENTRY_TRACES_SAMPLE_RATE` defaults to `0.0`, so this is errors only and adds
+  no latency overhead or cost pressure; the RED metrics story stays with Grafana (9.1).
 
 ---
 
