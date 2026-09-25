@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,19 @@ from ...services.spotify_ingest_service import SpotifyIngestService, get_ingest_
 
 router = APIRouter(prefix="/items")
 auth_service = SpotifyAuthService()
+
+# Hand the audio download and embedding to the external worker instead of doing it in
+# this process (10.6). Default OFF: with it unset nothing about this file's behaviour
+# changes, so the code can ship well before the worker machine exists.
+#
+# This must not be turned on before 10.5's attempt cap is deployed. In worker mode the
+# stale branch returns in milliseconds rather than minutes, which would tighten the old
+# failed-ingest loop from one pass every few minutes to one every few seconds — and the
+# 2/minute limit below would become a new user's first experience.
+#
+# Read as a module global (not imported by value elsewhere) so a test can patch
+# app.api.v1.songs.INGEST_WORKER_ENABLED and have it take effect.
+INGEST_WORKER_ENABLED = os.getenv("INGEST_WORKER_ENABLED", "").lower() == "true"
 
 
 def _run_process_top_tracks(user_id: int, ingest_service: SpotifyIngestService, db: Session, processing_users: set):
@@ -30,6 +45,17 @@ def _run_process_top_tracks(user_id: int, ingest_service: SpotifyIngestService, 
     finally:
         processing_users.discard(user_id)
         db.close()
+
+
+async def _refresh_seed_snapshot(
+    user: User, ingest_service: SpotifyIngestService, db: Session
+) -> None:
+    # Pull the user's current top tracks and write them over the seed snapshot. Kept as
+    # one helper because both the worker branch and the in-process branch need it, and
+    # because Phase 11's A6 replaces exactly this pair of calls when the Spotify login
+    # is retired — one call site to rewrite instead of two.
+    tracks = await auth_service.get_top_tracks(user.spotify_access_token)
+    ingest_service.add_user_top_songs(tracks, user, db)
 
 
 def _dispatch_response(
@@ -103,16 +129,40 @@ async def get_recs(
             return _dispatch_response(query_song, results, locked=True)
 
     if ingest_service.snapshot_is_stale(user, db):
-        tracks = await auth_service.get_top_tracks(user.spotify_access_token)
-        ingest_service.add_user_top_songs(tracks, user, db)
-        processing_users.add(user.id)
+        if INGEST_WORKER_ENABLED:
+            # Worker mode does no work here. It makes sure something is queued and
+            # returns; the worker picks it up over the ingest API (10.6).
+            #
+            # The pending check is what stops a Spotify `me/top/tracks` call on every
+            # request while the worker is still chewing. Stale means "no rows at all, or
+            # rows still worth working on", so pending == 0 inside this branch means the
+            # snapshot is genuinely empty and needs fetching; anything else is already
+            # queued and re-fetching would only cost an API call.
+            if ingest_service.pending_seed_count(user, db) == 0:
+                await _refresh_seed_snapshot(user, ingest_service, db)
+            if ingest_service.usable_seed_count(user, db) == 0:
+                return RecsResponse(status="processing")
+            # Otherwise fall through and dispatch from the seeds that are already done,
+            # rather than making the user wait for the whole batch. This is the same
+            # bargain the in-process path makes with on_first_success — with the caveat
+            # that the tail is now minutes rather than seconds, so a dispatch generated
+            # here can be locked in against a thin pool. Accepted: a thin dispatch today
+            # beats no dispatch today, and tomorrow's has the full set.
+            #
+            # Deliberately no processing_users.add and no background task. The flag is
+            # per-process and lost on every deploy, and with nothing in this process
+            # clearing it there would be nothing to clear it — the permanent stuck
+            # spinner that today's code does not have.
+        else:
+            await _refresh_seed_snapshot(user, ingest_service, db)
+            processing_users.add(user.id)
 
-        from ...db.database import SessionLocal
-        background_db = SessionLocal()
-        background_tasks.add_task(
-            _run_process_top_tracks, user.id, ingest_service, background_db, processing_users
-        )
-        return RecsResponse(status="processing")
+            from ...db.database import SessionLocal
+            background_db = SessionLocal()
+            background_tasks.add_task(
+                _run_process_top_tracks, user.id, ingest_service, background_db, processing_users
+            )
+            return RecsResponse(status="processing")
 
     # Guard before calling query_recommendations (10.5). The snapshot can now be
     # not-stale while holding zero usable seeds — every one failed terminally — and in

@@ -102,6 +102,13 @@ KEYWORD_MAP: list[tuple[str, str]] = [
 ]
 
 
+# Every canonical genre the map above can produce. Derived, not typed out, so it cannot
+# drift from KEYWORD_MAP. Used to validate a genre arriving from outside the process —
+# the ingest worker (10.6) classifies audio on another machine, and a value that is not
+# one of these would silently poison the genre-filtered branch of query_recommendations.
+CANONICAL_GENRES: frozenset[str] = frozenset(canonical for _, canonical in KEYWORD_MAP)
+
+
 def normalize_genre(spotify_genres: list[str]) -> str | None:
     """Map a list of Spotify genre tags to the closest canonical Bandcamp genre.
 

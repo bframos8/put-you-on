@@ -3,12 +3,13 @@ import os
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
 from fastapi import Request
-from sqlalchemy import and_, exists, func, or_, text
+from sqlalchemy import and_, exists, func, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 
 import essentia
 import numpy as np
@@ -35,6 +36,16 @@ AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".m4a", ".ogg"}
 # latter. Reaching it sets ingest_failed_at, which is what makes the seed terminal and
 # stops snapshot_is_stale from re-queueing the whole ingest forever.
 INGEST_MAX_ATTEMPTS = 3
+
+# How long a worker's claim on a seed is good for (10.6). A claim is a lease, not a lock:
+# the worker holds no database connection while it downloads, so the only thing stopping a
+# crashed worker from parking a row forever is this expiry. It has to comfortably exceed
+# the time to download and embed a whole batch — measured at well under a minute per track
+# on a residential connection — while staying short enough that a dead worker's rows come
+# back on their own. Fifteen minutes covers a batch of three with an order of magnitude to
+# spare. The cost of it being too long is only a longer spinner; the cost of it being too
+# short is two workers downloading the same track.
+INGEST_CLAIM_LEASE_SECONDS = 900
 
 
 class NoUsableSeedsError(RuntimeError):
@@ -268,6 +279,10 @@ class SpotifyIngestService:
         # Truncated: this is shown to the user and a spotdl traceback can run to
         # kilobytes. The full text is in the container logs.
         top_song.ingest_error = str(error)[:500]
+        # Release the worker's lease (10.6). A failed seed that still has attempts left
+        # should be immediately re-claimable rather than sitting out the rest of its
+        # lease; in the in-process path this is simply always None already.
+        top_song.claimed_at = None
         if top_song.ingest_attempts >= INGEST_MAX_ATTEMPTS:
             top_song.ingest_failed_at = datetime.now()
             logger.warning(
@@ -306,12 +321,27 @@ class SpotifyIngestService:
         if total == 0:
             return True
 
-        pending = db.query(func.count()).select_from(UserTopSong).filter(
+        return SpotifyIngestService.pending_seed_count(user, db) > 0
+
+    @staticmethod
+    def pending_seed_count(user: User, db: Session) -> int:
+        # Seeds still worth working on: no song behind them yet, and not yet retired at
+        # INGEST_MAX_ATTEMPTS. This is the second half of snapshot_is_stale, pulled out
+        # because get_recs needs the same number on its own in worker mode (10.6) to
+        # decide whether anything is already queued.
+        #
+        # A row whose song_id is set but whose genre is NULL is deliberately NOT pending,
+        # matching what snapshot_is_stale has always counted: query_recommendations
+        # handles a null genre by falling back to the unfiltered branch, so there is
+        # nothing outstanding to do for it.
+        #
+        # A claimed row still counts. A worker holding a lease is work in progress, and
+        # treating it as finished would let get_recs re-fetch the snapshot underneath it.
+        return db.query(func.count()).select_from(UserTopSong).filter(
             UserTopSong.user_id == user.id,
             UserTopSong.song_id == None,
             UserTopSong.ingest_failed_at == None,
         ).scalar()
-        return pending > 0
 
     @staticmethod
     def usable_seed_count(user: User, db: Session) -> int:
@@ -331,6 +361,166 @@ class SpotifyIngestService:
             UserTopSong.user_id == user.id,
             UserTopSong.ingest_failed_at != None,
         ).scalar()
+
+    @staticmethod
+    def claim_pending_seeds(db: Session, limit: int, lease_seconds: int) -> list[dict]:
+        """Lease up to `limit` pending seeds to a worker, across all users (10.6).
+
+        The standard Postgres work-queue statement: the inner SELECT takes row locks and
+        SKIP LOCKED steps over anything another claim is already holding, so two workers
+        polling at the same moment get disjoint sets instead of one of them blocking.
+        The outer UPDATE only re-locks rows this transaction already holds, so it cannot
+        re-block on what the inner select skipped.
+
+        Three things here are load-bearing and easy to get wrong:
+
+        - **It commits.** `get_db` closes the session without committing, which rolls
+          back, so without this the lease would be discarded the moment the request ends
+          and every poll would hand out the same rows again — the worker would download
+          each track over and over and SKIP LOCKED would buy nothing.
+        - **`synchronize_session=False`.** With an `IN (subquery)` criteria the ORM
+          cannot use its `evaluate` strategy and falls back to `fetch`, which rewrites
+          the statement to add its own supplemental RETURNING columns on top of ours.
+        - **RETURNING names columns, not the entity**, so what comes back is a plain row
+          rather than an ORM object built out of an UPDATE.
+
+        The lease bound is computed in SQL (`now() - interval`), never against a Python
+        clock: the only machine that matters is the database's, and the worker's is in
+        another timezone entirely.
+        """
+        claimable = (
+            select(UserTopSong.id)
+            .where(
+                UserTopSong.song_id == None,
+                UserTopSong.ingest_failed_at == None,
+                or_(
+                    UserTopSong.claimed_at == None,
+                    UserTopSong.claimed_at < func.now() - timedelta(seconds=lease_seconds),
+                ),
+            )
+            .order_by(UserTopSong.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        rows = db.execute(
+            update(UserTopSong)
+            .where(UserTopSong.id.in_(claimable))
+            .values(claimed_at=func.now())
+            .returning(
+                UserTopSong.id,
+                UserTopSong.spotify_url,
+                UserTopSong.track_title,
+                UserTopSong.artist_name,
+                UserTopSong.ingest_attempts,
+            )
+            .execution_options(synchronize_session=False)
+        ).all()
+        db.commit()
+
+        # Logged because a worker that stops claiming is otherwise completely invisible:
+        # the symptom is users stuck on "Building your drop", and nothing reaches Sentry
+        # (the same blind spot that hid the 10.3 loop for three months).
+        if rows:
+            logger.info("Claimed %d seed(s) for the ingest worker", len(rows))
+        return [
+            {
+                "id": row.id,
+                "spotify_url": row.spotify_url,
+                "track_title": row.track_title,
+                "artist_name": row.artist_name,
+                "attempts": row.ingest_attempts,
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def complete_seed(
+        top_song_id: int, genre: str | None, embedding: list[float], db: Session
+    ) -> str:
+        """Store a worker's finished ingest against one seed (10.6).
+
+        Mirrors the write half of `process_top_tracks`: reuse the Song for this Spotify
+        track if one already exists, otherwise create it as a non-candidate, then link
+        the seed to it. Returns a short status the endpoint turns into a response.
+
+        Idempotent on purpose. A deploy recreates the backend container mid-request
+        (8.3), so the worker can perfectly reasonably POST a result that already landed;
+        that has to be a no-op rather than a second Song or an overwrite of a newer one.
+        """
+        top_song = db.query(UserTopSong).filter(UserTopSong.id == top_song_id).first()
+        if top_song is None:
+            return "unknown"
+
+        if top_song.song_id is not None:
+            # Already done — by an earlier POST of this same result, or by another user's
+            # ingest of the same track. Release the lease and say so; do not overwrite,
+            # because a worker whose lease expired could otherwise clobber a newer
+            # embedding with a stale one.
+            top_song.claimed_at = None
+            db.commit()
+            return "already_done"
+
+        existing = (
+            db.query(Song)
+            .filter(Song.spotify_track_id == top_song.spotify_track_id)
+            .first()
+        )
+        if existing is not None:
+            song = existing
+            # Same as the in-process path: the freshly classified genre wins. These rows
+            # are only ever other users' seeds (corpus songs have no spotify_track_id),
+            # so this is not overwriting anything the Bandcamp pipeline produced.
+            song.genre = genre
+        else:
+            song = Song(
+                title=top_song.track_title,
+                artist_name=top_song.artist_name,
+                album_title=top_song.album_title,
+                spotify_track_id=top_song.spotify_track_id,
+                genre=genre,
+                embedding=embedding,
+                is_candidate=False,
+            )
+            try:
+                # SAVEPOINT, not a bare flush. spotify_track_id is unique and two workers
+                # can be finishing the same popular track for two different users at the
+                # same moment; a failed flush aborts the whole transaction, so without
+                # the savepoint the recovery query below would itself raise
+                # InFailedSqlTransaction.
+                with db.begin_nested():
+                    db.add(song)
+                    db.flush()
+            except IntegrityError:
+                song = (
+                    db.query(Song)
+                    .filter(Song.spotify_track_id == top_song.spotify_track_id)
+                    .one()
+                )
+
+        top_song.song_id = song.id
+        top_song.genre = genre
+        top_song.claimed_at = None
+        top_song.ingest_error = None
+        db.commit()
+        return "ok"
+
+    @staticmethod
+    def record_seed_failure(
+        top_song_id: int, error: str, db: Session
+    ) -> tuple[int, bool] | None:
+        """Record a worker's failed ingest (10.6). Returns (attempts, terminal), or None
+        if the seed no longer exists — the user's top tracks may have moved on while the
+        worker was downloading, in which case add_user_top_songs deleted the row.
+
+        Thin on purpose: the counting, truncation and retirement rules live in
+        _record_failure, so the worker path and the in-process path cannot diverge on
+        what counts as a failure.
+        """
+        top_song = db.query(UserTopSong).filter(UserTopSong.id == top_song_id).first()
+        if top_song is None:
+            return None
+        SpotifyIngestService._record_failure(top_song, RuntimeError(error), db)
+        return top_song.ingest_attempts, top_song.ingest_failed_at is not None
 
     @staticmethod
     def _dedupe_by_artist(pool: list, limit: int) -> list[Song]:
