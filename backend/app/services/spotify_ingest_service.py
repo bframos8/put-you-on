@@ -279,18 +279,10 @@ class SpotifyIngestService:
         # cluster on a few artists while staying cheap against the HNSW index.
         pool_size = limit * 5
 
-        # P5a: pgvector's HNSW post-filters within ef_search candidates, so the
-        # default ef_search=40 under-returns when we ask for pool_size=50 (the
-        # fallback kNN came back with only 39 rows, shrinking the dedupe pool).
-        # Scope ef_search to 2x pool_size for this transaction so the pool fills.
-        # Capped here intentionally — much higher flips the genre-filtered branch
-        # to an index plan that post-filters down to a handful of rows.
+        # HNSW tuning is set per branch below rather than once here, because the two
+        # branches want opposite things from ef_search. See each branch for why.
         # set_config(..., is_local=true) is the parameterizable equivalent of
         # `SET LOCAL` (plain SET won't take a bound parameter).
-        db.execute(
-            text("SELECT set_config('hnsw.ef_search', :ef, true)"),
-            {"ef": str(pool_size * 2)},
-        )
 
         query_entry = (
             db.query(UserTopSong)
@@ -355,12 +347,27 @@ class SpotifyIngestService:
         #
         # iterative_scan is the other half, and the two only work together. pgvector
         # does not push the genre predicate into graph traversal; it post-filters
-        # within the index scan, so with ~15% selectivity a plain scan returns a
-        # fraction of pool_size. 'relaxed_order' lets it resume from discarded
-        # candidates until the pool fills, at the cost of approximate ordering
-        # (see _dedupe_by_artist). Scoped with is_local=true like ef_search above.
+        # within the index scan, so a plain scan returns a fraction of pool_size.
+        # 'relaxed_order' lets it resume from discarded candidates until the pool
+        # fills, at the cost of approximate ordering (see _dedupe_by_artist).
+        #
+        # ef_search goes DOWN to 40 here, which reverses P5a. P5a raised it to
+        # 2x pool_size because the pool under-filled; iterative scan now does that
+        # job properly, and the high value had become actively harmful: pgvector's
+        # cost estimate scales with ef_search, so at 100 the index path costed 6978
+        # against a sequential scan's 6052 and the planner rejected its own index.
+        # At 40 it costs 4262 and wins on merit, no planner hints needed.
+        # Measured on prod, 110,833 candidates (2026-09-25):
+        #   ef=100  -> Parallel Seq Scan, 86.7 ms, 79,403 buffers
+        #   ef=40   -> HNSW Index Scan,    2.8 ms,  1,778 buffers
+        # Both returned the full 50. The seq scan only looked competitive because
+        # everything was cached on a temporarily-scaled-up instance; the buffer
+        # count is the number that predicts behaviour on the real one.
         results = []
         if query_genre:
+            db.execute(
+                text("SELECT set_config('hnsw.ef_search', '40', true)")
+            )
             db.execute(
                 text("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)")
             )
@@ -373,9 +380,15 @@ class SpotifyIngestService:
             results = self._dedupe_by_artist(pool, limit)
 
         if len(results) < limit:
-            # Back to exact order for the unfiltered fallback. Nothing post-filters
-            # it down here, so it fills the pool without help, and strict distance
-            # order is free.
+            # The unfiltered fallback wants the opposite settings. Nothing post-filters
+            # it, so it needs no iterative scan and gets exact distance order free —
+            # but HNSW returns at most ef_search candidates, so ef must exceed
+            # pool_size or the pool is capped at 40 (P5a's original finding: 39 rows
+            # back for a 50-row request). 2x leaves margin.
+            db.execute(
+                text("SELECT set_config('hnsw.ef_search', :ef, true)"),
+                {"ef": str(pool_size * 2)},
+            )
             db.execute(
                 text("SELECT set_config('hnsw.iterative_scan', 'off', true)")
             )

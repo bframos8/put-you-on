@@ -1303,7 +1303,50 @@ is the last thing you wire because it automates a process you've already proven 
   after. Without the stamp, the deploy's `alembic upgrade head` would find the live
   `b8c9d0e1f2a3` missing from the chain and error (a safe, loud failure — not data loss).
 
-- [ ] **10.2 Finish P5b — rebuild the HNSW index (launch gate).**
+- [x] **10.2 Finish P5b — rebuild the HNSW index (launch gate).**
+  > **Done 2026-09-25. `songs_embedding_hnsw_idx` exists, 858 MB, valid and ready.**
+  >
+  > **The build took 2m37s, not the predicted hour.** Scaled RDS up with
+  > `terraform apply -var 'db_instance_class=...'`, set
+  > `max_parallel_maintenance_workers = 0` *before* `maintenance_work_mem` (the parallel
+  > path allocates the full setting as a DSM segment up front — that is the DiskFull
+  > that killed the earlier attempt; serial allocates lazily), then `CREATE INDEX` and
+  > `ANALYZE`. No spill notice. The site stayed up the whole time: `CREATE INDEX` takes
+  > only a SHARE lock, so reads never blocked, and only writes to `songs` would have.
+  >
+  > **`db.t4g.medium` was unavailable** — repeated `InsufficientDBInstanceCapacity` in
+  > us-east-1a. Built on `db.t4g.small` instead: 1.61 GiB usable, 413 MiB
+  > `shared_buffers`, ~1.2 GiB free against a ~650 MiB graph. Note that scaling up does
+  > **not** raise `maintenance_work_mem` — RDS's default formula still yields 64 MB on a
+  > bigger class, so the session `SET` is what does the work.
+  >
+  > **The index alone was not enough, and this is the real lesson.** With P5a's
+  > `ef_search=100` the planner *rejected its own index*: pgvector's cost estimate scales
+  > with `ef_search`, costing the index path 6978 against a sequential scan's 6052.
+  > P5a raised `ef_search` because the pool under-filled — a job `iterative_scan` now
+  > does properly — so the high value had become self-defeating. Dropping the genre
+  > branch to `ef_search=40` costs 4262 and the planner picks the index on merit, with
+  > no `enable_seqscan` hint. Measured on prod:
+  >
+  > | Plan | Time | Buffers |
+  > |---|---|---|
+  > | Before the index (cold, seq scan) | 8084 ms | 145,400, incl. 7.8 s disk |
+  > | `ef=100`, index rejected | 86.7 ms | 79,403 |
+  > | `ef=40`, HNSW index scan | **2.8 ms** | **1,778** |
+  >
+  > The middle row is the trap: 86 ms *looks* fine, but it is a sequential scan whose
+  > cost was hidden by everything being cached on a temporarily larger instance. Buffer
+  > count, not wall clock, is what predicts behaviour back on the small one.
+  >
+  > **Gate passed** on all three criteria: `Index Scan using songs_embedding_hnsw_idx`,
+  > the full 50 rows (13 removed by filter), and **no Sort node** — the plan is a
+  > `Nested Loop Left Join` driven by the index with `albums_pkey` inside, so index
+  > order is preserved.
+  >
+  > **Rare genres deliberately still seq-scan.** At 0.65% selectivity (`ambient`, 722
+  > rows) the planner prefers a parallel seq scan at 64 ms, which is correct: it
+  > detoasts only the matching embeddings, and buffer traffic scales with matches. The
+  > expensive case is the common genres, and those now get the index.
   > **Note 2026-09-18:** the RDS instance is now Terraform-managed (6.5), so do the
   > scale-up and scale-down by changing `instance_class` in
   > [infra/rds.tf](../infra/rds.tf) and applying. Resizing in the console would drift

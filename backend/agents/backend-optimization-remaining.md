@@ -1,5 +1,25 @@
 # Backend Optimization — REMAINING (ordered queue)
 
+> **P5b is DONE (2026-09-25), so this queue is empty.** The index was rebuilt on a
+> temporarily scaled-up RDS in 2m37s (not the ~hour expected) and the query change
+> landed with it. Full write-up in
+> [deployment-gameplan.md](../../claude-mds/deployment-gameplan.md) 10.2. Two
+> corrections to what the runbook below predicted, kept here because they are the
+> transferable lessons:
+> - **The "Remaining steps" below are incomplete.** Moving the filter to `Song.genre`
+>   and enabling `iterative_scan` was not sufficient: the planner still rejected the
+>   index, because pgvector's cost estimate scales with `ef_search` and P5a's value of
+>   100 made the index path cost more than a sequential scan. The genre branch now uses
+>   `ef_search=40`, which **reverses P5a** — iterative scan fills the pool now, so the
+>   high value was pure cost inflation. 2.8 ms and 1,778 buffers, against 86.7 ms and
+>   79,403 buffers at `ef=100`.
+> - **`max_parallel_maintenance_workers = 0` must be set BEFORE `maintenance_work_mem`.**
+>   In the parallel path pgvector allocates the whole `maintenance_work_mem` as a DSM
+>   segment up front, which is exactly the "DSM DiskFull" step 1 warns about. Serial
+>   allocates lazily and peaks at the true graph size.
+>
+> The rest of this file is kept as written for its measurement history.
+
 > **Source of truth for what's left, in priority order.** Companions:
 > [backend-optimization-completed.md](backend-optimization-completed.md) and
 > [backend-optimization-deferred.md](backend-optimization-deferred.md) (A1, A2, A7, P6,
