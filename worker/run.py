@@ -66,7 +66,7 @@ def process(job: dict, embedder: Embedder, classifier: AudioGenreClassifier, cli
     try:
         audio_path = download(
             spotify_url, config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET,
-            js_runtime=config.JS_RUNTIME,
+            js_runtime=config.JS_RUNTIME, timeout=config.DOWNLOAD_TIMEOUT_SECONDS,
         )
         audio = load_audio(audio_path)
         genre = classifier.classify(audio)
@@ -158,7 +158,15 @@ def main() -> int:
         logger.info("Claimed %d seed(s), lease %ss", len(jobs), lease_seconds)
         batch_started = time.monotonic()
         for job in jobs:
-            process(job, embedder, classifier, client)
+            try:
+                process(job, embedder, classifier, client)
+            except Exception as e:
+                # process() already reports an ingest failure to the app; reaching here
+                # means the reporting itself failed — a 5xx, a 422, a dropped connection
+                # mid-deploy. Log it and move on. This worker is meant to run for weeks,
+                # so nothing about one seed may be allowed to end the loop. The seed stays
+                # claimed and comes back when its lease expires.
+                logger.error("Seed %s could not be reported: %s", job.get("id"), e)
             if _stopping:
                 break
         elapsed = time.monotonic() - batch_started

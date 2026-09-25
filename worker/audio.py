@@ -76,7 +76,23 @@ class Embedder:
         return frame_embeddings.mean(axis=0).tolist()
 
 
-def download(spotify_url: str, client_id: str, client_secret: str, js_runtime: str = "node") -> Path:
+def _run_spotdl(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+    # Wrapped so that no exception out of subprocess carries the argv. Both
+    # CalledProcessError and TimeoutExpired stringify the whole command, which holds
+    # --client-secret, and that string travels to the app and is stored in
+    # user_top_songs.ingest_error. Hence no check=True, and a hand-written message for
+    # the timeout. A timeout is needed at all because a hung spotdl would otherwise
+    # hold this worker forever while its server-side lease quietly expired.
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(f"spotdl did not finish within {timeout:.0f}s") from None
+
+
+def download(
+    spotify_url: str, client_id: str, client_secret: str,
+    js_runtime: str = "node", timeout: float = 600.0,
+) -> Path:
     """Fetch one track's audio with spotdl. Mirrors SpotifyIngestService._download,
     plus two flags the backend does not pass. Both were found by measurement on
     2026-09-25 and both are required for this to work at all:
@@ -105,7 +121,7 @@ def download(spotify_url: str, client_id: str, client_secret: str, js_runtime: s
     # files, and so an empty result unambiguously means "produced no audio".
     job_dir = Path(tempfile.mkdtemp(prefix="ingest_", dir=DOWNLOADS_DIR))
     try:
-        result = subprocess.run(
+        result = _run_spotdl(
             ["spotdl", "--no-cache", "--audio", "youtube",
              "--format", "mp3", "--bitrate", "320k",
              "--yt-dlp-args", f"--js-runtimes {js_runtime}",
@@ -113,18 +129,24 @@ def download(spotify_url: str, client_id: str, client_secret: str, js_runtime: s
              "--client-secret", client_secret,
              "--output", str(job_dir),
              spotify_url],
-            capture_output=True,
-            text=True,
+            timeout=timeout,
         )
         if result.returncode != 0:
             # Deliberately NOT `check=True`. CalledProcessError stringifies the whole
             # argv, which contains --client-secret, and this string travels to the app
             # and is stored in user_top_songs.ingest_error. A download failure must not
             # put the Spotify client secret in the database.
-            tail = (result.stderr or result.stdout or "").strip().splitlines()
+            # spotdl prints rich-formatted tracebacks, so most lines are box-drawing and
+            # source echo. Keep the last few lines that carry actual words — this string
+            # is stored in ingest_error and read by a human during triage.
+            tail = [
+                line.strip(" │╭╮╰╯─")
+                for line in (result.stderr or result.stdout or "").splitlines()
+                if line.strip(" │╭╮╰╯─")
+            ]
             raise RuntimeError(
                 f"spotdl exited {result.returncode}: "
-                + (" | ".join(tail[-3:]) if tail else "no output")
+                + (" | ".join(tail[-2:]) if tail else "no output")
             )
         audio_files = [
             f for f in job_dir.rglob("*")

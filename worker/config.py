@@ -43,6 +43,11 @@ HTTP_TIMEOUT = float(os.getenv("WORKER_HTTP_TIMEOUT", "30"))
 # builds a frontend. Must be on PATH; run.py checks at startup.
 JS_RUNTIME = os.getenv("WORKER_JS_RUNTIME", "node")
 
+# Hard ceiling on one spotdl call. A measured track takes about 70 seconds including
+# the embedding, so ten minutes is generous; the point is that a hung download cannot
+# hold the worker indefinitely while its server-side lease expires underneath it.
+DOWNLOAD_TIMEOUT_SECONDS = float(os.getenv("WORKER_DOWNLOAD_TIMEOUT_SECONDS", "600"))
+
 # TLS verification, on unless explicitly disabled. The ONLY reason to turn this off is a
 # local stack behind mkcert certificates, which the system trusts but Python (certifi)
 # does not. Never set it false against a real host: the bearer token would be sent to
