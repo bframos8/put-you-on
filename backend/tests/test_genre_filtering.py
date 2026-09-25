@@ -2,8 +2,11 @@
 Unit tests for recommendation filtering in SpotifyIngestService.
 
 Verifies that:
-- The Spotify genre comes from UserTopSong.genre (query_entry), not Song.genre
-- Candidates are filtered by Album.genre matching the Spotify genre
+- The Spotify genre the query runs against comes from UserTopSong.genre
+  (query_entry), not from the query song's own Song.genre
+- Candidates are filtered by Song.genre matching that Spotify genre (P5b: the
+  denormalized column, equivalent to Album.genre for candidates but reachable
+  by the HNSW index scan)
 - Falls back to unfiltered results when genre filter returns fewer than `limit`
 - No genre filter is applied when query_entry.genre is None
 - Recommendations are deduped so every rec is a different artist (Album.artist_id),
@@ -62,9 +65,14 @@ def make_db(query_entry, genre_pool=None, fallback_pool=None):
 
     base_query is db.query(Song, Album.artist_id).outerjoin(...)
     .options(selectinload(Song.album)).filter(...)*3 .order_by(...); the genre
-    branch then adds .filter(Album.genre==...) and the fallback branch does not.
+    branch then adds .filter(Song.genre==...) and the fallback branch does not.
     Both end in .limit(pool_size).all(). We return `genre_pool` on the first
     .all() call and `fallback_pool` on the second.
+
+    Note this mock is positional: it hands back pools in call order and never
+    inspects which column was filtered on. So it pins the branch STRUCTURE, not
+    the SQL. That the genre predicate reaches the index is verified against the
+    real database by 10.2's EXPLAIN gate, not here.
 
     Pools are lists of (Song, artist_id) tuples, matching the real rows.
     """

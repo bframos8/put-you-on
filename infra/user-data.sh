@@ -98,7 +98,16 @@ CERT=/etc/letsencrypt/live/putyouon.app/cert.pem
 
 # Through the public name, not localhost: this exercises DNS, nginx, TLS and the app the
 # way a user does.
-if curl -fsS -m 10 https://putyouon.app/health | grep -q '"status":"ok"'; then
+#
+# /health/ready, not /health. /health is liveness only — it answers 200 with the database
+# completely gone, so the alarm sat green through the single most likely way this app
+# breaks. /ready runs SELECT 1 and returns 503 when it can't, which -f turns into a
+# non-zero exit and so up=0.
+#
+# The grep pattern is part of the endpoint choice, not decoration: /health returns
+# "ok" and /health/ready returns "ready". Change one without the other and a perfectly
+# healthy site publishes up=0, putting you in permanent ALARM ten minutes later.
+if curl -fsS -m 10 https://putyouon.app/health/ready | grep -q '"status":"ready"'; then
   up=1
 else
   up=0

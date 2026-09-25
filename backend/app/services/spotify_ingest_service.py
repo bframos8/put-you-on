@@ -244,11 +244,18 @@ class SpotifyIngestService:
 
     @staticmethod
     def _dedupe_by_artist(pool: list, limit: int) -> list[Song]:
-        # Walk the pool in similarity order, keeping the first (closest) song
+        # Walk the pool in the order the query returned it, keeping the first song
         # per artist so every dispatched rec is a different artist. Artist
         # identity is Album.artist_id; songs without one (null) collapse to a
         # single slot. Returns fewer than `limit` when the pool lacks enough
         # distinct artists.
+        #
+        # "In similarity order" only approximately, for the genre branch: it runs
+        # with hnsw.iterative_scan='relaxed_order', which returns rows slightly out
+        # of distance order in exchange for actually filling the pool. So the song
+        # kept for an artist may not be that artist's very closest. For a daily
+        # feed of ten recs that is not worth a re-sort, and it beats the alternative
+        # of a pool that comes back half empty.
         seen_artists = set()
         null_used = False
         results = []
@@ -272,18 +279,10 @@ class SpotifyIngestService:
         # cluster on a few artists while staying cheap against the HNSW index.
         pool_size = limit * 5
 
-        # P5a: pgvector's HNSW post-filters within ef_search candidates, so the
-        # default ef_search=40 under-returns when we ask for pool_size=50 (the
-        # fallback kNN came back with only 39 rows, shrinking the dedupe pool).
-        # Scope ef_search to 2x pool_size for this transaction so the pool fills.
-        # Capped here intentionally — much higher flips the genre-filtered branch
-        # to an index plan that post-filters down to a handful of rows.
+        # HNSW tuning is set per branch below rather than once here, because the two
+        # branches want opposite things from ef_search. See each branch for why.
         # set_config(..., is_local=true) is the parameterizable equivalent of
         # `SET LOCAL` (plain SET won't take a bound parameter).
-        db.execute(
-            text("SELECT set_config('hnsw.ef_search', :ef, true)"),
-            {"ef": str(pool_size * 2)},
-        )
 
         query_entry = (
             db.query(UserTopSong)
@@ -336,19 +335,63 @@ class SpotifyIngestService:
             .order_by(Song.embedding.cosine_distance(query_song.embedding))
         )
 
-        # Filter candidates by album genre matching the query song's genre.
-        # Candidate genre is derived from the album they belong to (Album.genre).
+        # Filter candidates by genre, reading Song.genre rather than Album.genre
+        # (P5b). The two are equivalent for candidates — the songs_fill_genre
+        # trigger denormalizes albums.genre onto songs on insert, albums.genre is
+        # never updated afterwards, and all 110,833 candidates have one — but they
+        # are very different to the planner. A predicate on Album.genre sits on the
+        # inner side of the LEFT JOIN, which lets Postgres simplify the join to an
+        # INNER JOIN and drive from albums, hash-joining songs: that reads the whole
+        # table and throws away the index ordering. On Song.genre it is a qual on
+        # songs itself, so the HNSW index can drive the scan.
+        #
+        # iterative_scan is the other half, and the two only work together. pgvector
+        # does not push the genre predicate into graph traversal; it post-filters
+        # within the index scan, so a plain scan returns a fraction of pool_size.
+        # 'relaxed_order' lets it resume from discarded candidates until the pool
+        # fills, at the cost of approximate ordering (see _dedupe_by_artist).
+        #
+        # ef_search goes DOWN to 40 here, which reverses P5a. P5a raised it to
+        # 2x pool_size because the pool under-filled; iterative scan now does that
+        # job properly, and the high value had become actively harmful: pgvector's
+        # cost estimate scales with ef_search, so at 100 the index path costed 6978
+        # against a sequential scan's 6052 and the planner rejected its own index.
+        # At 40 it costs 4262 and wins on merit, no planner hints needed.
+        # Measured on prod, 110,833 candidates (2026-09-25):
+        #   ef=100  -> Parallel Seq Scan, 86.7 ms, 79,403 buffers
+        #   ef=40   -> HNSW Index Scan,    2.8 ms,  1,778 buffers
+        # Both returned the full 50. The seq scan only looked competitive because
+        # everything was cached on a temporarily-scaled-up instance; the buffer
+        # count is the number that predicts behaviour on the real one.
         results = []
         if query_genre:
+            db.execute(
+                text("SELECT set_config('hnsw.ef_search', '40', true)")
+            )
+            db.execute(
+                text("SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)")
+            )
             pool = (
                 base_query
-                .filter(Album.genre == query_genre)
+                .filter(Song.genre == query_genre)
                 .limit(pool_size)
                 .all()
             )
             results = self._dedupe_by_artist(pool, limit)
 
         if len(results) < limit:
+            # The unfiltered fallback wants the opposite settings. Nothing post-filters
+            # it, so it needs no iterative scan and gets exact distance order free —
+            # but HNSW returns at most ef_search candidates, so ef must exceed
+            # pool_size or the pool is capped at 40 (P5a's original finding: 39 rows
+            # back for a 50-row request). 2x leaves margin.
+            db.execute(
+                text("SELECT set_config('hnsw.ef_search', :ef, true)"),
+                {"ef": str(pool_size * 2)},
+            )
+            db.execute(
+                text("SELECT set_config('hnsw.iterative_scan', 'off', true)")
+            )
             pool = base_query.limit(pool_size).all()
             results = self._dedupe_by_artist(pool, limit)
 
