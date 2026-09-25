@@ -1347,6 +1347,39 @@ is the last thing you wire because it automates a process you've already proven 
   > rows) the planner prefers a parallel seq scan at 64 ms, which is correct: it
   > detoasts only the matching embeddings, and buffer traffic scales with matches. The
   > expensive case is the common genres, and those now get the index.
+  >
+  > ---
+  >
+  > **Correction, same day: the first version of this did not work in the app, and the
+  > EXPLAIN gate above did not catch it.** The gate query was hand-written and omitted
+  > `Song.id.not_in(already_recommended)`, which the real query has. Running the
+  > *deployed* code path showed a sequential scan, even though `ef_search` and
+  > `iterative_scan` were being applied correctly and the pool filled to 50.
+  >
+  > **Cause:** `NOT IN (subquery)` cannot become an anti-join, because one NULL in the
+  > subquery would make the predicate unknown. Postgres compiles it to a hashed SubPlan,
+  > and the distorted row estimate (6922 → 2671) pushed the planner back onto a
+  > sequential scan. `NOT EXISTS` is a true anti-join and the planner then chooses the
+  > index on merit — no `enable_seqscan` hint, no tuned constant to go stale.
+  >
+  > Warm, per genre: `latin` 81 ms / 71,715 buffers → **9.0 ms / 3,142**; `blues` 85 ms /
+  > 67,889 → **9.9 ms / 3,613**; `reggae` 75 ms / 63,742 → **6.2 ms / 1,346**.
+  >
+  > **Three lessons worth carrying forward:**
+  > - *An EXPLAIN gate must run the ORM's own SQL*, not a hand-written approximation.
+  >   Compile the real query with `literal_binds` and explain that.
+  > - *`pg_stat_user_indexes.idx_scan` is flushed asynchronously*, so reading it right
+  >   after a query in the same transaction gives stale numbers and reports a false
+  >   negative. Use `pg_stat_force_next_flush()` + `pg_stat_clear_snapshot()`, or read
+  >   the plan instead.
+  > - *Single-shot timings mislead.* First readings showed the index at 1.3 s, apparently
+  >   worse than a seq scan; that was cold index pages. Run twice and compare buffer
+  >   hit/read, which is what predicts production where nothing stays cached.
+  >
+  > **Final verification** ran the real `query_recommendations` against prod inside an
+  > outer transaction bound with `join_transaction_mode="create_savepoint"`, then rolled
+  > it back: `idx_scan` +1, 10 recs returned, and row counts identical before and after,
+  > so no daily dispatch was consumed.
   > **Note 2026-09-18:** the RDS instance is now Terraform-managed (6.5), so do the
   > scale-up and scale-down by changing `instance_class` in
   > [infra/rds.tf](../infra/rds.tf) and applying. Resizing in the console would drift
