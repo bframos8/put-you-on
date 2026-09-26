@@ -47,6 +47,30 @@ jobs:
           putyouon-backend:ci
           sh -c "pip install -r test-requirements.txt && python -m pytest -p no:cacheprovider"
 
+  # The ingest worker (10.6) runs outside AWS and is not built into any image, so it gets
+  # its own job rather than riding along in the backend one. It runs on a bare runner with
+  # two pip installs, not in the backend image, because only worker/client.py is covered:
+  # audio.py and run.py import essentia and load an 18 MB TensorFlow graph at import time,
+  # which would mean building or pulling the heavy image to test a status-code mapping.
+  #
+  # That mapping is what is being protected (10.7). It decides whether a rejected result is
+  # retried forever in silence, charged against a real user's seeds, or treated as the
+  # build mismatch it actually is — so it is worth a job of its own.
+  #
+  # Note this is NOT in branch protection's required checks (which are `backend` and
+  # `frontend`), so a failure here blocks the Deploy workflow but not a merge. Add it to
+  # the required contexts if that matters.
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # 3.11 to match the backend image and the venv the worker is run from.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests pytest
+      - run: python -m pytest worker/tests -q -p no:cacheprovider
+
   frontend:
     runs-on: ubuntu-latest
     steps:

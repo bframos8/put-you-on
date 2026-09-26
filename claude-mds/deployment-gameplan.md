@@ -1604,6 +1604,11 @@ is the last thing you wire because it automates a process you've already proven 
   > request would probably still reveal the route exists rather than 404. Inferred from the
   > observed ordering, not verified with the token unset. It leaks route existence only.
   >
+  > **A bug in what this shipped was found the same day and is fixed in 10.7**: a result
+  > the app rejects was retried forever without advancing the attempt counter. Reachable as
+  > soon as a worker starts claiming, which is why 10.7 gates 11.4 step 1 rather than the
+  > flag flip.
+  >
   > **The re-arm SQL in [runbook.md](../deploy/runbook.md) is currently a no-op**: both
   > users are fully processed (20 rows, 20 with a song, 0 pending, 0 failed, 0 stored
   > errors), so nothing has gone terminal. That changes the moment a new user logs in with
@@ -1746,6 +1751,117 @@ is the last thing you wire because it automates a process you've already proven 
   > - **Collides with 11.1's A6**, which rewrites the same `get_recs` block to retire the
   >   Spotify login. Decide the order before starting either.
 
+- [ ] **10.7 Stop the worker retrying a rejected result forever, silently. (Gate on 11.4 step 1.)**
+  **How:** Found while asking "would we even know if onboarding broke?" — the answer was
+  no. In [worker/run.py](../worker/run.py), `client.complete` was wrapped in
+  `except SeedGone` only, so a **422 from embedding validation** escaped to the batch
+  loop's generic handler, which logged "could not be reported" and moved on. The seed kept
+  `song_id IS NULL`, **`ingest_attempts` unchanged** (only `/fail` advances it, and it was
+  never called) and `claimed_at` set — so every time the 15-minute lease expired the same
+  track was claimed, downloaded, embedded and refused again. Unbounded, and invisible. The
+  same shape as 10.5's loop through a different door.
+  1. **The app logs it at ERROR and changes nothing on the seed.** Not laziness — see the
+     measurement below. Seed id, the reason, and the received vector width, which is what
+     makes the log actionable.
+  2. **The worker treats 422 as fatal and exits non-zero.** It does *not* report through
+     `/fail`. The seed is left exactly as it was for a corrected worker, and a stopped
+     worker is something a person notices.
+  3. **Only 422.** 401 (a token rotated under a running worker), 408, 429 and 5xx stay
+     transient and keep retrying on lease expiry.
+  4. Fixed in passing: the no-`spotify_url` branch called `client.fail` with no
+     `except SeedGone`, where a deleted row is the ordinary case, not an error.
+  **Why:** A silent unbounded retry is the exact failure mode 10.5 existed to remove, and
+  10.6 reintroduced it in a path 10.5's attempt cap cannot see.
+  > **The plan for this item was wrong in an instructive way, and a measurement fixed it.**
+  > The first draft had the *app* record a failure attempt on a 422, so the cap would retire
+  > the seed. That is backwards, because a 422 cannot be the track's fault:
+  >
+  > | Input to the model | Result |
+  > |---|---|
+  > | 5 s digital silence | valid 1280-vector, **all** components non-zero, norm 1.28 |
+  > | 5 s near-silence (1e-9) | valid, norm 1.28 |
+  > | 5 s DC offset | valid, norm 3.52 |
+  > | 0.5 s (too short) | raises in the worker, reported through `/fail` correctly |
+  >
+  > So the zero-norm and non-finite checks have **no reachable trigger from audio**. The
+  > only realistic persistent 422 is a **dimension mismatch, a property of the worker's
+  > build**. Recording that against the seed would retire three of a real user's tracks per
+  > worker bug — and since `_record_failure` releases the lease, the retries are immediate
+  > rather than 15 minutes apart, so a mis-built worker would burn every seed of every user
+  > within minutes. The verification agent caught this; the measurement settled it.
+  >
+  > A second thing the review caught: the genre check rejects in **pydantic, before the
+  > handler**, so no app-side handling could ever see it. The worker-side rule is therefore
+  > the general fix and the app-side log is the narrow one — the opposite of the first
+  > draft's framing.
+  >
+  > **`ingest_attempts` stays report-driven, deliberately.** Nothing counts a *claim*, so a
+  > worker OOM-killed mid-embed, or SIGTERM'd through the `if _stopping: break` that
+  > abandons a batch's tail, still leaves work to the lease. Counting claims would need a
+  > column and would change what 10.5's cap means. Not worth it; written down instead.
+
+- [ ] **10.8 Turn Sentry on. Production has never reported an error. (Gate on 11.4 step 1.)**
+  > **Not a new discovery — this is 1.3's "remaining (ops, not code)" and A.2's deliberate
+  > blank, finally coming due.** Confirmed 2026-09-25: `/putyouon/prod/SENTRY_DSN` does not
+  > exist (`ParameterNotFound`), so `main.py` skips `sentry_sdk.init` and **no error has
+  > ever left this deployment**.
+  >
+  > Worth doing before the worker goes live because the whole of Phase 10 turned on failures
+  > being invisible. The 10.3 write-up explains the three-month-old ingest loop by the
+  > failures being `logger.warning` rather than exceptions — true, but incomplete: a genuine
+  > exception would not have reached Sentry either. 10.6 adds a worker whose death is silent
+  > by construction. This is the cheapest thing on the list and the one that would have
+  > caught the most.
+  **How:** Create the Sentry project, then seed the DSN and redeploy — `SENTRY_DSN` is
+  already in `ssm-seed.sh`'s SecureString allowlist and
+  [prod.env.example](../deploy/prod.env.example), so no code or script change is needed:
+  ```sh
+  aws ssm put-parameter --name /putyouon/prod/SENTRY_DSN \
+    --type SecureString --value 'https://...' --overwrite
+  ```
+  Do **not** re-run `./deploy/ssm-seed.sh` for this: `deploy/prod.env` has drifted from SSM
+  (it holds a `SENTRY_DSN` but lacks the three `GRAFANA_*` keys), so a full re-seed would
+  push every stale value in that file over what is live. Then verify a real event arrives —
+  an unhandled exception from a throwaway endpoint, or `sentry_sdk.capture_message` from a
+  one-off `docker compose run`. **An unverified DSN is the same as no DSN.**
+  **Why:** `SENTRY_TRACES_SAMPLE_RATE` defaults to `0.0`, so this is errors only: no
+  latency overhead, no cost pressure, and the RED metrics story stays with Grafana (9.1).
+  > **Expect a burst on day one if a signup happens while `INGEST_WORKER_ENABLED` is still
+  > off.** The in-process path fails every download on this IP, and 10.9 logs a terminal
+  > retirement at ERROR, so one new user produces about ten Sentry events. That is correct
+  > behaviour, not noise — but it will look like an incident, so know it is coming.
+
+- [ ] **10.9 Make ingest outcomes visible without reading logs by hand.**
+  **How:** Three small changes, sized to the honest answer that a dead worker cannot be
+  detected without the metrics surface 9.1 deliberately left out.
+  1. **A seed retiring terminally logs at ERROR**, with the seed id, the user id and the
+     reason. `logger.error` is promoted to a Sentry issue by sentry-sdk's default
+     `LoggingIntegration` (verified against the pinned `sentry-sdk==2.56.0`:
+     `LoggingIntegration` is in `_DEFAULT_INTEGRATIONS` and `DEFAULT_EVENT_LEVEL` is
+     `ERROR`), so **10.9 is what makes 10.8 catch ingest degradation** rather than only
+     unhandled exceptions. The two items only work together.
+  2. **A `no_seeds` response logs at WARNING**, from `/song_recs/` only. Deliberately not
+     ERROR: it reports an observed *state*, not a transition, and a terminally-failed user
+     re-fetches on every dashboard mount forever, so at ERROR it would raise a Sentry event
+     each time (`DedupeIntegration` only collapses events carrying `exc_info`). The
+     once-per-seed alarm is item 1. And not from `/status`, which the frontend polls every
+     five seconds.
+  3. **`%s` parameters, never f-strings.** Sentry groups on the raw message, so
+     interpolating a user id into it fragments one issue into one per user.
+  Plus: extend the runbook's triage query with `ingest_attempts`, `max(claimed_at)` and
+  `ingest_error`, because as written it cannot tell a looping seed (`pending=1, claimed=1,
+  attempts=0`) from a seed being downloaded right now.
+  **Why:** Today the user is told their seeds failed and the operator is not, which is
+  backwards.
+  > **What this explicitly does NOT cover, so nobody mistakes it for done:**
+  > - **A dead or sleeping worker stays invisible.** Seeds nobody claims are
+  >   indistinguishable from work in progress. The only signal is the worker's own
+  >   `Claimed N seed(s)` line, on the worker's machine. Accepted deliberately; a heartbeat
+  >   was considered and rejected as coupling the app's health to a machine at home.
+  > - **No alarm on pending-seed age.** That is the real answer and it needs an app-metrics
+  >   endpoint for Alloy to scrape — the RED work deferred out of 9.1, on a box with 2 GB
+  >   of RAM. Deferred again, on purpose.
+
 ---
 
 ## Phase 11 — First post-launch workstream: retire Spotify login (pipeline shakedown)
@@ -1757,8 +1873,8 @@ is the last thing you wire because it automates a process you've already proven 
 > the live CI/CD pipeline**: every step lands as a PR → CI (8.1) → merge → build/push
 > (8.2) → deploy (8.3), under branch protection (8.4).
 
-> **Do 11.4 and 11.6 first, before 11.1.** Both are activation of things already built and
-> deployed, and both are cheap. 11.4 in particular is a prerequisite in substance if not on
+> **Do 11.4 first, before 11.1, and do 10.7 and 10.8 before that.** 11.4 is activation of
+> something already built and deployed, and it is a prerequisite in substance if not on
 > paper: 11.1 exists to remove the ~25-user OAuth cap, i.e. to let more people sign up —
 > and until the worker is actually running, every one of those signups fails its ingest and
 > burns its seeds to terminal. Shipping identity before activating the worker is backwards.
@@ -1796,6 +1912,11 @@ is the last thing you wire because it automates a process you've already proven 
   > This is what 10.6 does not cover. 10.6 built, deployed and verified the machinery; the
   > flag is off and no worker is running, so **new users are still blocked**. Until this
   > item is done, nothing has actually been fixed for anybody.
+  **Gated on 10.7 and 10.8**, and on **step 1**, not on the flag flip. The `/ingest/*`
+  routes are already live in production because `INGEST_WORKER_TOKEN` is seeded, so the
+  moment a worker starts claiming is the moment 10.7's silent retry loop becomes reachable —
+  well before `INGEST_WORKER_ENABLED` is touched. 10.8 comes first so that the first real
+  onboarding is the first one you can actually see.
   **How:** Order matters, and getting it wrong costs a user their seeds.
   1. **Start the worker before flipping the flag.** Any machine on a residential
      connection: venv from [worker/worker_requirements.txt](../worker/worker_requirements.txt),
@@ -1840,6 +1961,10 @@ is the last thing you wire because it automates a process you've already proven 
      it wants `KeepAlive` and `RunAtLoad` rather than a schedule. `data_pipeline`'s
      `setup_cron.sh` is the wrong model here. Point `StandardOutPath` somewhere that gets
      rotated.
+     > **Throttle the restart.** 10.7 makes the worker **exit non-zero** when the app
+     > refuses its output, which is deliberate — but a bare `KeepAlive` would then restart
+     > it into the same refusal forever. Use `ThrottleInterval` and check the log rather
+     > than assuming a running process means a working one.
   4. Stop `caffeinate`-style workarounds from being load-bearing: set the mini to never
      sleep, and verify the worker survives a reboot.
   5. Decide whether the laptop stays as a second worker. It can — claims use
@@ -1850,34 +1975,6 @@ is the last thing you wire because it automates a process you've already proven 
   `processing` indefinitely. Nothing alerts, so the only signal is the worker's own
   `Claimed N seed(s)` log line (see the runbook's worker section).
 
-- [ ] **11.6 Turn Sentry on. Production has never reported an error.**
-  > **Not a new discovery — this is 1.3's "remaining (ops, not code)" and A.2's deliberate
-  > blank, finally coming due.** Confirmed 2026-09-25: `/putyouon/prod/SENTRY_DSN` does not
-  > exist (`ParameterNotFound`), so `main.py` skips `sentry_sdk.init` and **no error has
-  > ever left this deployment**.
-  >
-  > Worth doing now rather than later because the whole of Phase 10 turned on failures being
-  > invisible. The 10.3 write-up explains the three-month-old ingest loop by the failures
-  > being `logger.warning` rather than exceptions — true, but incomplete: a genuine
-  > exception would not have reached Sentry either. 10.6 adds a worker whose death is silent
-  > by construction. Error reporting is the cheapest thing on this list and the one that
-  > would have caught the most.
-  **How:** Create the Sentry project, then seed the DSN and redeploy — `SENTRY_DSN` is
-  already in `ssm-seed.sh`'s SecureString allowlist and
-  [prod.env.example](../deploy/prod.env.example), so no code or script change is needed:
-  ```sh
-  aws ssm put-parameter --name /putyouon/prod/SENTRY_DSN \
-    --type SecureString --value 'https://...' --overwrite
-  ```
-  Do **not** re-run `./deploy/ssm-seed.sh` for this: `deploy/prod.env` has drifted from SSM
-  (it holds a `SENTRY_DSN` but lacks the three `GRAFANA_*` keys), so a full re-seed would
-  push every stale value in that file over what is live. Then verify a real event arrives —
-  an unhandled exception from a throwaway endpoint, or `sentry_sdk.capture_message` from a
-  one-off `docker compose run`. An unverified DSN is the same as no DSN.
-  **Why:** `SENTRY_TRACES_SAMPLE_RATE` defaults to `0.0`, so this is errors only and adds
-  no latency overhead or cost pressure; the RED metrics story stays with Grafana (9.1).
-
----
 
 ## Deferred / follow-up (explicitly out of this pass)
 
@@ -1889,6 +1986,16 @@ is the last thing you wire because it automates a process you've already proven 
     fresh-DB setup it needs should run `alembic upgrade head`, keeping Alembic the single
     authority. (Its orphaned helper `data_pipeline/db/initializer.py`, now used only by its
     own unit test, can be removed too whenever the pipeline work resumes.)
+- **The in-process ingest path validates no embedding at all.** `/ingest/complete` checks
+  dimensions, finiteness and norm before storing (10.6), but `process_top_tracks` writes
+  `embedding` straight into `Song` with no equivalent check, so the flag-off path would store
+  a degenerate vector silently — and `Song.spotify_track_id` is unique, so one bad embedding
+  for a popular track becomes the query seed for every user who has it (10.6's "poisoned
+  seeds cross users"). Filed here rather than as a launch item because the trigger looks
+  unreachable in practice: measured 2026-09-25, the model returns a dense finite vector even
+  for digital silence, and audio too short to embed raises instead. The asymmetry is still
+  real, and the fix is to route both paths through `embedding_problem`.
+
 - **Zero-downtime deploys** — current plan accepts brief recreate downtime; blue/green is a
   later upgrade.
 - **Model binary in git (audit H2)** — the 18 MB `.pb` committed twice

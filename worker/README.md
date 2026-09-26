@@ -120,6 +120,27 @@ would just quietly be wrong.
 The same applies to the pinned `essentia-tensorflow` and `numpy` versions in
 [worker_requirements.txt](worker_requirements.txt).
 
+## When it stops on purpose
+
+The worker **exits non-zero** if the app refuses one of its results (HTTP 422). That is not
+a crash to restart blindly. A refusal means this worker's build disagrees with the
+deployment it is talking to — a different vector width, a different model output, or a genre
+the server's vocabulary does not have — so every subsequent seed would be refused too.
+
+It deliberately does **not** report that as a seed failure. Doing so would advance the
+attempt counter and retire three of the user's tracks for a bug in this process, and because
+a recorded failure releases the claim lease immediately, a mis-built worker would burn every
+seed of every user within minutes. Instead the seed is left untouched for a corrected worker,
+and the app logs the rejection at ERROR so it reaches Sentry.
+
+If this happens: pull the checkout, reinstall
+[worker_requirements.txt](worker_requirements.txt), and check the app's log for the received
+dimension. Under launchd, throttle the restart — a bare `KeepAlive` will restart it straight
+back into the same refusal.
+
+Everything else (401, 429, timeouts, 5xx) is transient and retried when the claim lease
+expires.
+
 ## When something looks wrong
 
 If users are stuck on "Building your drop", check this worker first. A worker that is
