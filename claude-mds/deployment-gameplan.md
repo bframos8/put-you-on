@@ -1255,6 +1255,12 @@ is the last thing you wire because it automates a process you've already proven 
 
 ## Phase 10 — Pre-launch verification & cutover
 
+> **Complete as of 2026-10-02.** All nine items ticked. One piece of 10.3 is deliberately
+> carried forward rather than claimed: the worker branch of `get_recs` for a genuinely new
+> account has not run live, and becomes part of 11.2's smoke test with the first email or
+> Google signup. Everything else in this phase is verified against production, not just
+> merged.
+
 - [x] **10.1 Reconcile + stamp live RDS, then run migrations and verify schema.**
   > **Schema verified 2026-09-24, and 10.1 is closed.** `alembic current` on the live DB
   > returns `45f91add221e (head)`, and `alembic check` (the autogenerate diff, run from
@@ -1394,7 +1400,7 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** The index is currently dropped — both kNN branches seq-scan. Launching without
   it means every recommendation request pays full-table-scan latency.
 
-- [ ] **10.3 End-to-end smoke test.**
+- [x] **10.3 End-to-end smoke test.**
   > **Security headers on `/` fixed first, 2026-09-24.** The check below would have
   > failed: `https://putyouon.app/` returned only `x-powered-by: Next.js`, while
   > `/health` returned the full set. The headers come from the app's
@@ -1469,12 +1475,48 @@ is the last thing you wire because it automates a process you've already proven 
   > process your seeds" instead of spinning forever. A proxy reduces failures but cannot
   > eliminate them. **Done in 10.5.**
   >
-  > **Remaining, and this is the only thing keeping Phase 10 open (as of 2026-09-25):**
-  > - **The SSL Labs scan.** Independent of everything else; nothing blocks it.
-  > - **One real ML ingest.** Still impossible on this instance — the blocker 10.6 was
-  >   written to route around is fixed in code but not yet switched on. This half of the
-  >   smoke test passes when **11.4** does, and not before. Tick 10.3 then, with a real
-  >   new user's dispatch as the evidence.
+  > **Closed 2026-10-02**, with one deliberate gap carried forward (below).
+  >
+  > **SSL Labs: A+, no warnings** (engine 2.4.3, fresh scan, `publish=off`). TLS 1.2 and 1.3
+  > only; six suites, all AEAD with forward secrecy — three TLS 1.2 ECDHE-ECDSA plus the three
+  > TLS 1.3 suites; forward secrecy "robust" (every simulated client negotiates it); HSTS
+  > one-year `includeSubDomains`, and preloaded in Chrome/Edge/Firefox/IE via the `.app` TLD;
+  > BEAST, Heartbleed, POODLE, FREAK, Logjam, Ticketbleed and ROBOT all negative; fallback
+  > SCSV on, 0-RTT off, ALPN on. Certificate `CN=putyouon.app`, Let's Encrypt YE2, **EC
+  > P-256**, expires **2026-12-19** — certbot should renew around mid-November, and
+  > `putyouon-cert-expiring` fires under 20 days if it does not.
+  >
+  > Two things in that result that look wrong and are not: the RSA suites listed in
+  > `ssl_ciphers` never appear, because an ECDSA certificate can only negotiate ECDSA suites
+  > (they would matter only if the cert ever became RSA); and there is no OCSP stapling,
+  > because Let's Encrypt retired OCSP in 2025 — the reason the config omits it.
+  >
+  > **ML ingest: proven on production by a forced seed rather than a new account.** A
+  > single unprocessed seed was inserted for an existing user, pointing at a track with no
+  > `Song` (Rick Astley, `4cOdK2wGLETKBW3PvgPWqT`), so `/complete` had to take the *create*
+  > branch a real new user takes:
+  >
+  > | Time (UTC) | Event |
+  > |---|---|
+  > | 21:20:51 | seed 201 inserted |
+  > | 21:21:19 | claimed by the worker on the MacBook, on its next poll |
+  > | 21:22:20 | `Worker completed seed 201 (ok, genre=electronic)` |
+  >
+  > Song 111291 came out `is_candidate=false`, 1280 dimensions, norm 4.49. **The strongest
+  > evidence is its neighbourhood:** of 110,833 corpus candidates, the two nearest are
+  > another Rick Astley remix (cosine distance 0.098) and *"Never gonna give you up 7 vocal
+  > mix"* (0.106). That settles the risk 10.6 flagged in `worker/audio.py` — an embedding
+  > computed on another machine through duplicated loader and model wiring could have landed
+  > in a different vector space with nothing raising. It did not. The test seed was then
+  > deleted; the song was kept, since it is a valid embedding and unreferenced.
+  >
+  > **What this did NOT exercise live, and why it is accepted for now.** The `get_recs`
+  > worker branch for a genuinely new account — empty snapshot → queued → `/status`
+  > `processing` → first seed lands → dispatch — is covered by tests but has never run
+  > against production. Proving it needs a new person, and with the Spotify login being
+  > retired in Phase 11 there is little point recruiting one through an OAuth flow that is
+  > about to be deleted. **Carried forward to 11.2**, where the first email/Google signup
+  > is that test.
   **How:** Full Spotify OAuth round-trip on the real domain, a top-tracks fetch, and one ML
   ingest/classify call. Check security headers + HSTS and an SSL Labs scan.
   **Why:** OAuth, CORS, HSTS, and TLS only fully exercise against the real origin — this is
@@ -1751,7 +1793,11 @@ is the last thing you wire because it automates a process you've already proven 
   > - **Collides with 11.1's A6**, which rewrites the same `get_recs` block to retire the
   >   Spotify login. Decide the order before starting either.
 
-- [ ] **10.7 Stop the worker retrying a rejected result forever, silently. (Gate on 11.4 step 1.)**
+- [x] **10.7 Stop the worker retrying a rejected result forever, silently. (Gate on 11.4 step 1.)**
+  > **Done 2026-10-02 (PR #27, merge `ee3376b`).** Deployed and confirmed in the running
+  > container. Exercised live through 10.8's verification: one deliberately malformed result
+  > (a 1-dimension embedding for nonexistent seed 0) returned **422** with the short
+  > `detail`, logged at ERROR, and reached Sentry — and changed nothing in the database.
   **How:** Found while asking "would we even know if onboarding broke?" — the answer was
   no. In [worker/run.py](../worker/run.py), `client.complete` was wrapped in
   `except SeedGone` only, so a **422 from embedding validation** escaped to the batch
@@ -1800,7 +1846,16 @@ is the last thing you wire because it automates a process you've already proven 
   > abandons a batch's tail, still leaves work to the lease. Counting claims would need a
   > column and would change what 10.5's cap means. Not worth it; written down instead.
 
-- [ ] **10.8 Turn Sentry on. Production has never reported an error. (Gate on 11.4 step 1.)**
+- [x] **10.8 Turn Sentry on. Production has never reported an error. (Gate on 11.4 step 1.)**
+  > **Done 2026-10-02.** DSN seeded with `put-parameter` (read from a prompt, so it never hit
+  > shell history), then the existing Deploy run was re-run — no empty commit needed, since
+  > a re-run re-materializes SSM. Confirmed `SENTRY_DSN` present in the restarted
+  > container. **Verified by a real event, not a synthetic one:** the malformed `/complete`
+  > described in 10.7 went through the app's own `sentry_sdk.init`, the default
+  > `LoggingIntegration`, and 10.7's ERROR log, and arrived in Sentry as *"Rejected worker
+  > result for seed 0 …"*. That single event proves the DSN, the egress, the app's init and
+  > the log-to-issue promotion at once, which a `capture_message` from a one-off process
+  > would not have.
   > **Not a new discovery — this is 1.3's "remaining (ops, not code)" and A.2's deliberate
   > blank, finally coming due.** Confirmed 2026-09-25: `/putyouon/prod/SENTRY_DSN` does not
   > exist (`ParameterNotFound`), so `main.py` skips `sentry_sdk.init` and **no error has
@@ -1831,7 +1886,11 @@ is the last thing you wire because it automates a process you've already proven 
   > retirement at ERROR, so one new user produces about ten Sentry events. That is correct
   > behaviour, not noise — but it will look like an incident, so know it is coming.
 
-- [ ] **10.9 Make ingest outcomes visible without reading logs by hand.**
+- [x] **10.9 Make ingest outcomes visible without reading logs by hand.**
+  > **Done 2026-10-02 (PR #27).** Deployed alongside 10.7; the retirement ERROR and the
+  > `no_seeds` WARNING are both in the running code. Neither has fired for real yet — no seed
+  > has retired and nobody has hit `no_seeds` since — so the first live occurrence is still
+  > ahead. 10.8's test event confirmed the ERROR → Sentry path they depend on.
   **How:** Three small changes, sized to the honest answer that a dead worker cannot be
   detected without the metrics surface 9.1 deliberately left out.
   1. **A seed retiring terminally logs at ERROR**, with the seed id, the user id and the
@@ -1873,11 +1932,11 @@ is the last thing you wire because it automates a process you've already proven 
 > the live CI/CD pipeline**: every step lands as a PR → CI (8.1) → merge → build/push
 > (8.2) → deploy (8.3), under branch protection (8.4).
 
-> **Do 11.4 first, before 11.1, and do 10.7 and 10.8 before that.** 11.4 is activation of
-> something already built and deployed, and it is a prerequisite in substance if not on
-> paper: 11.1 exists to remove the ~25-user OAuth cap, i.e. to let more people sign up —
-> and until the worker is actually running, every one of those signups fails its ingest and
-> burns its seeds to terminal. Shipping identity before activating the worker is backwards.
+> **11.4 is done (2026-10-02), so 11.1 is unblocked.** It had to come first: 11.1 exists to
+> remove the ~25-user OAuth cap, i.e. to let more people sign up, and until the worker was
+> actually running every one of those signups would have failed its ingest and burned its
+> seeds to terminal. **The worker currently runs on a laptop** — new signups only ingest
+> while that machine is awake and running it, until 11.5.
 
 - [ ] **11.1 Ship Phase A (identity) through the pipeline, item by item.**
   **How:** Implement A1–A8 from that plan as individual PRs. **A1's migration is the
@@ -1899,6 +1958,20 @@ is the last thing you wire because it automates a process you've already proven 
   redirect returns).
   **Why:** The cutover smoke test proved the Spotify flow; this proves its replacement
   under the same real-origin conditions the dev environment can't reproduce.
+  > **This is also where the deferred half of 10.3 lands.** 10.3 proved the ML ingest on
+  > production with a forced seed, but the worker branch of `get_recs` for a *genuinely new
+  > account* has never run live: empty snapshot → seeds queued → `/status` `processing` →
+  > the worker claims them → first seed lands → dispatch. **Use the first new email or
+  > Google signup as that test**, and watch it end to end: the worker log (`Claimed N
+  > seed(s)`, then `done in …`), the `processing → ready` transition, a dispatch written
+  > for that user, and Sentry staying quiet. Note what a real signup will expose that the
+  > forced seed could not: roughly ten tracks at ~70 s each, so about twelve minutes to a
+  > full snapshot, and a first dispatch that locks in for the day against whatever subset
+  > has landed by then. Watch that once with real eyes before deciding it is acceptable.
+  >
+  > Depends on how seeds are created by then: if Phase B's search-and-pick has replaced
+  > `me/top/tracks`, the seeding step differs but the worker path from "unprocessed row
+  > exists" onward is identical.
 
 - [ ] **11.3 Ship Phases B and C (search-and-pick, playlist import) the same way.**
   **How:** Continue the per-item PR cadence for B1–B6, then C1–C3. Two post-launch
@@ -1908,7 +1981,19 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Search-and-pick is the real onboarding once the cap is gone — Phase A without
   B leaves new users a dashboard with nothing to seed it.
 
-- [ ] **11.4 Turn the ingest worker on and prove it with a real new user. (Do this first.)**
+- [x] **11.4 Turn the ingest worker on and prove it with a real new user. (Do this first.)**
+  > **Done 2026-10-02, with the new-user part carried forward to 11.2.** In the order this
+  > item requires: Sentry first (10.8); the worker started on the MacBook from a fresh
+  > `.venv.worker` — **not** an existing venv, whose yt-dlp 2026.03.x is the version measured
+  > failing — and confirmed polling production on its 60 s idle cadence (`20:54:15`,
+  > `20:55:16`, both 200); only then `INGEST_WORKER_ENABLED=true` and a redeploy. The worker
+  > rode through that restart without noticing. A forced seed then went through the full
+  > path in about a minute (see 10.3).
+  >
+  > One setup trap worth keeping: the worker calls `spotdl` **by name**, so whichever
+  > `spotdl` is first on PATH runs. With another venv active, the worker silently uses *that*
+  > venv's spotdl and its stale yt-dlp. Always run it from the activated `.venv.worker` and
+  > check `which spotdl`.
   > This is what 10.6 does not cover. 10.6 built, deployed and verified the machinery; the
   > flag is off and no worker is running, so **new users are still blocked**. Until this
   > item is done, nothing has actually been fixed for anybody.
@@ -1995,6 +2080,30 @@ is the last thing you wire because it automates a process you've already proven 
   unreachable in practice: measured 2026-09-25, the model returns a dense finite vector even
   for digital silence, and audio too short to embed raises instead. The asymmetry is still
   real, and the fix is to route both paths through `embedding_problem`.
+
+- **A user's top tracks never refresh once processed.** Found 2026-10-02: the snapshot
+  from 2026-06-10 was still being served four months later. Not a bug in the narrow sense —
+  since A6, "stale" means *empty or unfinished*, so a fully-processed snapshot is never
+  rebuilt and seeds are recycled instead. **Deliberately not fixed**, because Phase 11
+  retires `me/top/tracks` as the seed source; if a Spotify-derived source survives, it
+  needs a time-based refresh (e.g. re-fetch when `snapshot_at` is older than N days).
+
+- **The frontend's dispatch cache is not scoped to a user.** `song-rec-carousel.tsx` stores
+  the day's dispatch under the fixed key `pyo:recs` and replays it until midnight Pacific.
+  On a shared browser, a second user who logs in the same day is shown the first user's
+  recommendations. Harmless with two users and Spotify accounts; worth fixing before Phase
+  A, when email accounts make shared devices realistic. Key it by user id, and clear it on
+  logout.
+
+- **There is no account-deletion feature.** Deleting a user today means hand-written SQL,
+  in this order because none of the foreign keys cascade:
+  `user_recommendations` → `user_top_songs` → `users`, in one transaction. Seed `songs`
+  rows stay: they are shared reference data and some are pinned by `query_song_id`. A
+  deleted user's signed session cookie simply 401s, and Postgres never reuses the id. This
+  was planned as a drill on 2026-10-02 and not run. Phase A adds email accounts, which makes
+  "please delete my account" a realistic request; it should become a runbook procedure at
+  least, and probably an endpoint. A Spotify-linked user should also revoke the app from
+  their own Spotify account page.
 
 - **Zero-downtime deploys** — current plan accepts brief recreate downtime; blue/green is a
   later upgrade.
