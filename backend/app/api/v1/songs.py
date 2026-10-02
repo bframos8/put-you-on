@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -11,6 +12,8 @@ from ...core.limiter import limiter, session_key
 from ...schemas.song import SongResponse, RecsResponse, TopTrackItem, TopTracksResponse
 from ...services.spotify_auth_service import SpotifyAuthService
 from ...services.spotify_ingest_service import SpotifyIngestService, get_ingest_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/items")
 auth_service = SpotifyAuthService()
@@ -169,10 +172,19 @@ async def get_recs(
     # that state query_recommendations has no seed to pick and raises. Returning an
     # honest terminal status beats a 500 the frontend silently swallows.
     if ingest_service.usable_seed_count(user, db) == 0:
-        return RecsResponse(
-            status="no_seeds",
-            unprocessed_seeds=ingest_service.failed_seed_count(user, db),
+        failed = ingest_service.failed_seed_count(user, db)
+        # WARNING, deliberately not ERROR (10.9). This logs an observed *state*, not a
+        # transition: a user in this condition re-fetches on every dashboard mount and
+        # every refresh, forever, so at ERROR it would raise a Sentry event each time
+        # (DedupeIntegration only collapses events carrying exc_info). The once-per-seed
+        # alarm is the terminal-retirement ERROR in _record_failure. This line is here so
+        # that when you go looking, the logs say who hit the dead end and how wide it was.
+        #
+        # Logged only here, not in /status, which the frontend polls every 5 seconds.
+        logger.warning(
+            "Serving no_seeds to user %s (%d seed(s) failed terminally)", user.id, failed
         )
+        return RecsResponse(status="no_seeds", unprocessed_seeds=failed)
 
     query_song, results = ingest_service.query_recommendations(user, db)
     return _dispatch_response(

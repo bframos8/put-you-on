@@ -205,6 +205,52 @@ class TestCompleteValidation:
         assert mock_ingest.complete_seed.call_args[0][1] is None
 
 
+class TestRejectionLeavesTheSeedAlone:
+    """A rejected result must not be charged against the seed (10.7).
+
+    The tempting fix for the silent-retry bug was to record a failure attempt server-side
+    when validation rejects, so the cap would eventually retire the seed. That is wrong,
+    and measurement is why: the model emits a dense finite 1280-vector even for digital
+    silence, and audio too short to embed raises in the worker before anything is posted.
+    So a rejection here is never the track's fault — it means the worker's build disagrees
+    with this deployment. Charging it to the seed would retire three of a real user's
+    tracks per worker bug, and because a recorded failure releases the claim lease the
+    retries would be immediate rather than 15 minutes apart.
+
+    The worker stops instead. These tests pin the server half of that: reject, say so
+    loudly, change nothing.
+    """
+
+    def test_rejection_does_not_record_a_failure(self, client, worker_token, mock_ingest):
+        resp = client.post(
+            COMPLETE_URL, json={"id": 1, "embedding": [0.1] * 512}, headers=AUTH
+        )
+        assert resp.status_code == 422
+        mock_ingest.record_seed_failure.assert_not_called()
+
+    def test_rejection_does_not_store_the_result(self, client, worker_token, mock_ingest):
+        client.post(COMPLETE_URL, json={"id": 1, "embedding": [0.0] * 1280}, headers=AUTH)
+        mock_ingest.complete_seed.assert_not_called()
+
+    def test_rejection_is_logged_at_error(self, client, worker_token, caplog):
+        """ERROR specifically, because that is what reaches Sentry.
+
+        sentry-sdk's default LoggingIntegration promotes ERROR to an issue. At WARNING this
+        would be invisible, which was the original defect — the loop was not merely wrong,
+        it was silent.
+        """
+        import logging
+
+        with caplog.at_level(logging.ERROR, logger="app.api.v1.ingest"):
+            client.post(
+                COMPLETE_URL, json={"id": 7, "embedding": [0.1] * 99}, headers=AUTH
+            )
+        assert any(r.levelno == logging.ERROR for r in caplog.records)
+        message = " ".join(r.getMessage() for r in caplog.records)
+        # The seed id and the received width are what make the log actionable.
+        assert "7" in message and "99" in message
+
+
 class TestCompleteDispatch:
     def test_unknown_seed_is_404(self, client, worker_token, mock_ingest):
         mock_ingest.complete_seed.return_value = "unknown"

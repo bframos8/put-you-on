@@ -211,12 +211,27 @@ Then check the queue:
 ```sql
 SELECT count(*) FILTER (WHERE song_id IS NULL AND ingest_failed_at IS NULL) AS pending,
        count(*) FILTER (WHERE claimed_at IS NOT NULL AND song_id IS NULL) AS claimed,
-       count(*) FILTER (WHERE ingest_failed_at IS NOT NULL) AS failed
+       count(*) FILTER (WHERE ingest_failed_at IS NOT NULL) AS failed,
+       max(ingest_attempts) FILTER (WHERE song_id IS NULL) AS max_attempts,
+       max(claimed_at) AS newest_claim
 FROM user_top_songs;
 ```
 
 `pending` high and `claimed` zero means nothing is working the queue. A stuck `claimed`
 row clears itself after the 15-minute lease.
+
+The counts alone cannot tell a **seed the app keeps refusing** from a seed being downloaded
+right now: both look like `pending=1, claimed=1`. The tell is `max_attempts` staying at 0
+while `newest_claim` keeps advancing — the worker is claiming and getting nowhere. That is
+10.7's case, and a current worker exits rather than grinding, so seeing it means the worker
+predates that fix. The reasons live here:
+
+```sql
+SELECT id, user_id, track_title, ingest_attempts, claimed_at, ingest_error
+  FROM user_top_songs
+ WHERE song_id IS NULL
+ ORDER BY claimed_at DESC NULLS LAST;
+```
 
 **Turning the worker off** is one parameter: set `INGEST_WORKER_ENABLED` to anything but
 `true` (or delete it) and redeploy. The backend goes back to doing the ingest itself,
@@ -241,6 +256,10 @@ UPDATE user_top_songs
 
 Scoped to rows that are both unprocessed and retired: it must not zero the attempt count
 of a seed that is mid-retry, and it must not touch a seed that already has a song.
+
+Note it re-arms **every** terminal seed, not only ones that failed for the reason you have
+in mind, so anything retired for an unfetchable track will simply fail three more times and
+retire again. Bounded and harmless, but do not read a second retirement as a new problem.
 
 This is a manual patch, not a policy. The question 10.5 left open — whether terminal
 failures should expire on their own after N days — is still open.

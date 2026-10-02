@@ -323,8 +323,18 @@ class SpotifyIngestService:
         top_song.claimed_at = None
         if top_song.ingest_attempts >= INGEST_MAX_ATTEMPTS:
             top_song.ingest_failed_at = datetime.now()
-            logger.warning(
-                "Giving up on %s after %d attempts", top_song.track_title, top_song.ingest_attempts
+            # ERROR, not WARNING (10.9): this is the one event in the whole ingest path
+            # that fires exactly once per seed, at the transition, and it means a user has
+            # permanently lost a seed. sentry-sdk's default LoggingIntegration promotes
+            # ERROR to an issue, so this is what makes a degraded ingest visible without
+            # anyone reading logs.
+            #
+            # %s parameters, never an f-string: Sentry groups on the raw message, so
+            # interpolating the ids into it would fragment one issue into one per seed.
+            logger.error(
+                "Giving up on seed %s (user %s, %s) after %d attempts: %s",
+                top_song.id, top_song.user_id, top_song.track_title,
+                top_song.ingest_attempts, top_song.ingest_error,
             )
         db.commit()
 

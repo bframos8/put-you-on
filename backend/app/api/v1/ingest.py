@@ -118,7 +118,29 @@ async def complete_seed(
         # 422 by hand rather than through pydantic: a validation error would carry the
         # embedding back in its `input` field, and Starlette serializes with
         # allow_nan=False, so a NaN would make the error response itself unserializable
-        # and turn a bad request into a 500.
+        # and turn a bad request into a 500. Do not "tidy" this back into a validator.
+        #
+        # Logged at ERROR, which is the whole point of 10.7 (sentry-sdk's default
+        # LoggingIntegration promotes ERROR to an issue, so this reaches Sentry). The seed
+        # is deliberately left ALONE — no attempt recorded, nothing retired.
+        #
+        # That is not laziness, it is the measured conclusion. A rejection here cannot be
+        # the track's fault: the model emits a dense, finite, non-zero 1280-vector even for
+        # digital silence (measured 2026-09-25: norm 1.28, all 1280 components non-zero),
+        # and audio too short to embed raises in the worker long before it gets here. So in
+        # practice the only way to reach this line is a worker whose build disagrees with
+        # this deployment — a dimension mismatch. Counting that against the user's seed
+        # would retire three of their tracks per worker bug, and because _record_failure
+        # clears the claim lease the retries are immediate rather than 15 minutes apart, so
+        # a mis-built worker would burn every seed of every user within minutes.
+        #
+        # The worker treats this status as fatal and stops, which is what actually bounds
+        # the loop. See worker/client.py.
+        logger.error(
+            "Rejected worker result for seed %s: %s (received %d dimensions). "
+            "The worker's build disagrees with this deployment; the seed is unchanged.",
+            body.id, problem, len(body.embedding),
+        )
         raise HTTPException(status_code=422, detail=problem)
 
     status = ingest_service.complete_seed(body.id, body.genre, body.embedding, db)

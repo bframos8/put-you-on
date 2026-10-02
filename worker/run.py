@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.services.audio_genre_classifier import AudioGenreClassifier  # noqa: E402
 
 from audio import Embedder, cleanup, download, load_audio  # noqa: E402
-from client import ApiError, IngestClient, SeedGone  # noqa: E402
+from client import ApiError, FatalRejection, IngestClient, SeedGone  # noqa: E402
 import config  # noqa: E402
 
 logging.basicConfig(
@@ -56,8 +56,12 @@ def process(job: dict, embedder: Embedder, classifier: AudioGenreClassifier, cli
 
     if not spotify_url:
         # Nothing to download from. Report it so the seed retires at the attempt cap
-        # instead of being handed out forever.
-        client.fail(seed_id, "seed has no spotify_url")
+        # instead of being handed out forever. SeedGone is the ordinary case here, not an
+        # error: the row can be deleted between the claim and this call.
+        try:
+            client.fail(seed_id, "seed has no spotify_url")
+        except SeedGone:
+            logger.info("Seed %s vanished before its failure could be recorded", seed_id)
         logger.warning("Seed %s (%s) has no spotify_url", seed_id, label)
         return
 
@@ -91,6 +95,9 @@ def process(job: dict, embedder: Embedder, classifier: AudioGenreClassifier, cli
         # The work is wasted, not broken.
         logger.info("Seed %s vanished before its result could be stored", seed_id)
         return
+    # FatalRejection deliberately propagates: see main(). It is not reported through
+    # /fail, because a build mismatch is not the seed's fault and reporting it would
+    # retire the user's tracks over a bug in this process.
 
     logger.info(
         "Seed %s (%s) done in %.1fs: genre=%s, status=%s",
@@ -160,9 +167,24 @@ def main() -> int:
         for job in jobs:
             try:
                 process(job, embedder, classifier, client)
+            except FatalRejection as e:
+                # The one error this worker does not survive. The app refused its output,
+                # which means this build disagrees with that deployment, so every
+                # subsequent seed would be refused too. Stopping leaves the seeds
+                # untouched and turns an invisible grind into a dead process somebody
+                # notices. Nothing is reported to the app: see FatalRejection's docstring.
+                logger.error(
+                    "Refused by the app on seed %s: %s", job.get("id"), e
+                )
+                logger.error(
+                    "Stopping. This worker's build does not match %s. Check that the "
+                    "checkout and %s are current, then restart.",
+                    config.API_URL, "worker/worker_requirements.txt",
+                )
+                return 1
             except Exception as e:
                 # process() already reports an ingest failure to the app; reaching here
-                # means the reporting itself failed — a 5xx, a 422, a dropped connection
+                # means the reporting itself failed — a 5xx, a dropped connection
                 # mid-deploy. Log it and move on. This worker is meant to run for weeks,
                 # so nothing about one seed may be allowed to end the loop. The seed stays
                 # claimed and comes back when its lease expires.
