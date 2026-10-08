@@ -9,12 +9,12 @@ each lands.
 ## 1.1 — `/health` endpoint ✅
 
 **Shipped**
-- New router [backend/app/api/v1/health.py](../backend/app/api/v1/health.py):
+- New router [backend/app/api/v1/health.py](../../backend/app/api/v1/health.py):
   - `GET /health` → `200 {"status":"ok"}` — liveness, no dependencies touched.
   - `GET /health/ready` → `SELECT 1` via `get_db`; `200 {"status":"ready"}`, or
     `503 {"detail":{"status":"unavailable"}}` if the DB round-trip raises.
-- Registered in [main.py](../backend/app/main.py) with **no `/api/v1` prefix**.
-- Tests: [backend/tests/test_health.py](../backend/tests/test_health.py) (4 tests).
+- Registered in [main.py](../../backend/app/main.py) with **no `/api/v1` prefix**.
+- Tests: [backend/tests/test_health.py](../../backend/tests/test_health.py) (4 tests).
 
 **Decisions**
 - **Mounted at root `/health`, not `/api/v1/health`.** The compose `HEALTHCHECK`
@@ -27,7 +27,7 @@ each lands.
   (503) without necessarily killing the container on liveness.
 - **`SELECT 1` reuses the existing `get_db` dependency**, so the probe exercises
   the real connection pool (`pool_pre_ping=True` is already set in
-  [database.py](../backend/app/db/database.py)) rather than a throwaway connection.
+  [database.py](../../backend/app/db/database.py)) rather than a throwaway connection.
 - **Unauthenticated and not rate-limited**, per the gameplan — these are infra
   probes hit frequently by Docker/nginx/uptime monitors; `slowapi` limits and
   `get_current_user` would defeat their purpose.

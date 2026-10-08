@@ -30,18 +30,18 @@ via SSM.
 ## Current-state assessment (what exists vs. what's missing)
 
 **What you already have working for you**
-- Clean multi-stage [frontend/Dockerfile](../frontend/Dockerfile) (Next.js `standalone`).
-- A backend [Dockerfile](../backend/Dockerfile) that builds and runs uvicorn.
-- Alembic is set up ([backend/alembic/](../backend/alembic/)) alongside the models.
-- Security headers + HSTS toggle already implemented in [main.py](../backend/app/main.py).
-- `sentry-sdk` and `slowapi` already in [backend_requirements.txt](../backend/backend_requirements.txt).
+- Clean multi-stage [frontend/Dockerfile](../../frontend/Dockerfile) (Next.js `standalone`).
+- A backend [Dockerfile](../../backend/Dockerfile) that builds and runs uvicorn.
+- Alembic is set up ([backend/alembic/](../../backend/alembic/)) alongside the models.
+- Security headers + HSTS toggle already implemented in [main.py](../../backend/app/main.py).
+- `sentry-sdk` and `slowapi` already in [backend_requirements.txt](../../backend/backend_requirements.txt).
 
 **What blocks a production deploy (addressed by the phases below)**
-- [docker-compose.yaml](../docker-compose.yaml) is **broken**: `db` service is commented out
+- [docker-compose.yaml](../../docker-compose.yaml) is **broken**: `db` service is commented out
   but `backend` still `depends_on: [db]`. No restart policies, healthchecks, or networks.
 - **No `.github/` directory** — there is zero CI/CD today.
 - Schema is created at runtime via `Base.metadata.create_all()`
-  ([main.py:25](../backend/app/main.py#L25)) **and** Alembic exists → two competing schema
+  ([main.py:25](../../backend/app/main.py#L25)) **and** Alembic exists → two competing schema
   authorities. Production must use Alembic only.
 - TLS uses **mkcert localhost certs** hardcoded in compose/nginx; nginx has no real
   `server_name`, no HTTP→HTTPS redirect, no proxy/forwarded headers.
@@ -50,7 +50,7 @@ via SSM.
 - Secrets sit in plaintext root `.env-backend` / `.env-postgres` (dev-only pattern).
 - Dev TLS material sits in the working tree: `frontend/localhost+1-key.pem` /
   `localhost+1.pem` are **gitignored and were never committed** (`git log --all` is empty
-  for them), but [frontend/.dockerignore](../frontend/.dockerignore) doesn't exclude
+  for them), but [frontend/.dockerignore](../../frontend/.dockerignore) doesn't exclude
   `*.pem`, so they enter the frontend build context (builder stage only — the multi-stage
   runtime image doesn't ship them).
 
@@ -71,6 +71,7 @@ via SSM.
 9. Observability, backups, alarms
 10. Pre-launch verification + cutover + rollback runbook
 11. Post-launch: retire Spotify login + search seeding — first workstream through the pipeline
+    (now its own file: pyo-0.0.1-sign-in-change.md)
 ```
 
 Rationale for the ordering: the **images must be correct before you ship them** (phases
@@ -96,7 +97,7 @@ is the last thing you wire because it automates a process you've already proven 
 - [x] **0.2 Confirm region and architecture.**
   **How:** Deploy in **`us-east-1` (N. Virginia)** — the same region as the RDS instance
   (`pyo_db`). Use an **x86_64 (`t3`/`m`)** instance, **not** Graviton/`t4g`.
-  **Why:** `essentia-tensorflow==2.1b6.dev1389` ([backend_requirements.txt](../backend/backend_requirements.txt))
+  **Why:** `essentia-tensorflow==2.1b6.dev1389` ([backend_requirements.txt](../../backend/backend_requirements.txt))
   ships prebuilt wheels for `linux/amd64`; ARM wheels are not reliably available and you'd be
   stuck compiling. GitHub runners are amd64 by default, so images will match.
 
@@ -157,23 +158,23 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **1.1 Add a `/health` endpoint to the backend.**
   **How:** A tiny router returning `200 {"status":"ok"}`; optionally a `/health/ready` that
-  does a cheap `SELECT 1` against the DB. Register it in [main.py](../backend/app/main.py)
+  does a cheap `SELECT 1` against the DB. Register it in [main.py](../../backend/app/main.py)
   (unauthenticated, not rate-limited).
   **Why:** Compose healthchecks, nginx upstream checks, the deploy script's "is it back up?"
   gate, and external uptime monitors all need a cheap liveness/readiness signal.
 
 - [x] **1.2 Make Alembic the single schema authority; stop `create_all` in production.**
   *(Absorbs deferred item **P6** — see
-  [backend-optimization-deferred.md](../backend/agents/backend-optimization-deferred.md).)*
+  [backend-optimization-deferred.md](../../backend/agents/backend-optimization-deferred.md).)*
   > **Code landed 2026-07-17 (squash approach).** The 8-migration chain was
   > **squashed to a single baseline root**
-  > [45f91add221e](../backend/alembic/versions/45f91add221e_baseline_schema.py)
+  > [45f91add221e](../../backend/alembic/versions/45f91add221e_baseline_schema.py)
   > (`down_revision=None`) that `CREATE TABLE`s the full current schema + the `vector`
   > extension + `work_status_enum` + the `songs_fill_genre` trigger; the old 8 migrations
   > were deleted. The models now declare `uq_albums_url`, `uq_songs_album_id_title`, and
   > the composite `ix_user_recommendations_user_date` (previously only in migrations) so
   > models are the honest source of truth. `Base.metadata.create_all` was **removed
-  > outright** from [main.py](../backend/app/main.py) (not flag-guarded). Verified on a
+  > outright** from [main.py](../../backend/app/main.py) (not flag-guarded). Verified on a
   > throwaway pgvector container: `upgrade head` succeeds on an empty DB, the
   > `--autogenerate` drift diff is empty, `downgrade base` + re-up is clean, and all 146
   > backend tests pass. The **HNSW index is intentionally not in the baseline** (belongs
@@ -198,7 +199,7 @@ is the last thing you wire because it automates a process you've already proven 
   (see 10.2 — that migration is recorded as applied, but its index was later dropped
   manually; the rebuild belongs to P5b, not alembic).
   (c) Remove the `Base.metadata.create_all(bind=engine)` call at
-  [main.py:25](../backend/app/main.py#L25), or guard it behind a `RUN_CREATE_ALL=true`
+  [main.py:25](../../backend/app/main.py#L25), or guard it behind a `RUN_CREATE_ALL=true`
   flag used only for local dev. (d) Deployment runs `alembic upgrade head` as an explicit
   step (Phase 8).
   **Why:** `create_all` only ever **adds missing tables** — it never alters columns, adds
@@ -209,33 +210,33 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **1.3 Initialize Sentry.**
   > **Code landed 2026-07-22.** `sentry_sdk.init` added to
-  > [main.py](../backend/app/main.py), guarded by `SENTRY_DSN` presence (no-op in
+  > [main.py](../../backend/app/main.py), guarded by `SENTRY_DSN` presence (no-op in
   > local dev / tests — verified both ways; all 146 backend tests pass). Init runs
   > **before app-module imports** so import-time/startup failures are captured too.
   > Made **env-driven** rather than hardcoded: `SENTRY_ENVIRONMENT` (default
   > `"production"`) and `SENTRY_TRACES_SAMPLE_RATE` (default **`0.0` — errors only**)
-  > join `SENTRY_DSN` in [.env.example](../backend/.env.example), materialized from
+  > join `SENTRY_DSN` in [.env.example](../../backend/.env.example), materialized from
   > SSM at deploy (Phase 5). Performance tracing defaults **off** so the RED/latency
   > story stays owned by the Grafana stack
   > ([observability-plan.md](observability-plan.md)) with zero overlap; raise the
   > rate later to debug a slow endpoint. **Remaining (ops, not code):** create the
   > Sentry project and add the real `SENTRY_DSN` under `/putyouon/prod/` (Phase 5).
-  **How:** In [main.py](../backend/app/main.py), `import sentry_sdk` and
+  **How:** In [main.py](../../backend/app/main.py), `import sentry_sdk` and
   `sentry_sdk.init(dsn=os.getenv("SENTRY_DSN"), traces_sample_rate=..., environment="prod")`
   guarded by the env var being present (no-op locally). Add `SENTRY_DSN` to
-  [.env.example](../backend/.env.example) as part of this item (it's absent today).
+  [.env.example](../../backend/.env.example) as part of this item (it's absent today).
   **Why:** You already pay for the dependency. Production without error tracking means you
   learn about failures from users, not dashboards.
 
 - [x] **1.4 Set the production process model for uvicorn.**
-  > **Code landed 2026-07-22.** Backend [Dockerfile](../backend/Dockerfile) CMD now runs
+  > **Code landed 2026-07-22.** Backend [Dockerfile](../../backend/Dockerfile) CMD now runs
   > uvicorn with `--proxy-headers --forwarded-allow-ips=*` (1 worker, uvicorn's default).
   > Baked into the image (not a compose override) so the Phase 2 image is production-shaped
   > and dev, which also runs behind nginx, matches prod. `=*` is safe: port 8000 is never
   > published, only nginx on the internal network reaches it. Verified by booting the real
   > app with the flags: a request with `X-Forwarded-For: 203.0.113.7` is logged by uvicorn
   > with client `203.0.113.7` (vs `127.0.0.1` without it), so `get_remote_address`/`slowapi`
-  > now key the unauthenticated login routes ([auth.py](../backend/app/api/v1/auth.py)
+  > now key the unauthenticated login routes ([auth.py](../../backend/app/api/v1/auth.py)
   > `20/minute` + `10/minute`) on the real client IP instead of one site-wide nginx bucket.
   > Worker scaling stays deferred to metrics (6.1); the test suite is unaffected (change is
   > in the container launch command, not importable code).
@@ -247,7 +248,7 @@ is the last thing you wire because it automates a process you've already proven 
   can host a worker or two, but confirm RAM headroom before scaling. Start with **1 worker**
   and scale up only if metrics allow.
   **Why:** `--proxy-headers` makes the app see the real client IP. Without it, `slowapi`
-  keys every request on nginx's address ([limiter.py](../backend/app/core/limiter.py) uses
+  keys every request on nginx's address ([limiter.py](../../backend/app/core/limiter.py) uses
   `get_remote_address`), so the unauthenticated login/callback limits collapse into one
   **site-wide** bucket — ~21 logins/minute across all users starts returning 429s. (HSTS is
   *not* affected: it's a static `ENABLE_HSTS` toggle, scheme-independent.) Worker count is
@@ -256,16 +257,16 @@ is the last thing you wire because it automates a process you've already proven 
 - [x] **1.5 Point all environment config at the real domain.**
   > **Code landed 2026-07-22.** The domain *values* (`ENABLE_HSTS=true` and the three
   > `https://putyouon.app` origins/redirect) are production env set in SSM at deploy
-  > (Phase 5), not repo changes; [.env.example](../backend/.env.example) keeps its
+  > (Phase 5), not repo changes; [.env.example](../../backend/.env.example) keeps its
   > localhost dev defaults. The Phase-1 repo deliverable: documented the previously
   > undocumented `DAILY_LIMIT_BYPASS` (dev-only escape hatch; blank = limit enforced;
   > must stay unset in prod, where the app warns at startup if enabled). Two adjacent
   > fixes folded in: (a) corrected the `SPOTIFY_REDIRECT_URI` code fallback in
-  > [spotify_auth_service.py](../backend/app/services/spotify_auth_service.py) from
+  > [spotify_auth_service.py](../../backend/app/services/spotify_auth_service.py) from
   > `.../auth/spotify/callback` to `.../api/v1/auth/spotify/callback` (the real route
   > per main.py+auth.py; the old default 404'd, the silent-localhost-fallback trap 5.1
   > warns about); (b) added a committed
-  > [.env-postgres.example](../backend/.env-postgres.example) template for the backend's
+  > [.env-postgres.example](../../backend/.env-postgres.example) template for the backend's
   > second env_file (`POSTGRES_*`), broadening the `.gitignore` negation to
   > `!.env*.example` (verified the real `.env-backend`/`.env-postgres` secret files stay
   > ignored). All 146 backend tests pass.
@@ -273,8 +274,8 @@ is the last thing you wire because it automates a process you've already proven 
   `CORS_ALLOWED_ORIGINS=https://putyouon.app`, `FRONTEND_URL=https://putyouon.app`,
   `SPOTIFY_REDIRECT_URI=https://putyouon.app/api/v1/auth/spotify/callback`. Ensure
   `DAILY_LIMIT_BYPASS` stays **unset** in prod (it disables the daily dispatch limit) and
-  document it in [.env.example](../backend/.env.example), where it's missing today. Keep
-  [backend/.env.example](../backend/.env.example) updated as the documented contract.
+  document it in [.env.example](../../backend/.env.example), where it's missing today. Keep
+  [backend/.env.example](../../backend/.env.example) updated as the documented contract.
   **Why:** These currently default to `localhost`/`127.0.0.1`. OAuth, CORS, and HSTS all
   break or become insecure if they don't match the served origin.
 
@@ -290,17 +291,17 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **1.7 Keep dev TLS material out of the build context.**
   > **Code landed 2026-07-22.** Added `*.pem` to
-  > [frontend/.dockerignore](../frontend/.dockerignore) (it previously listed only
+  > [frontend/.dockerignore](../../frontend/.dockerignore) (it previously listed only
   > node_modules/.next/.env*.local). The correction below holds: the mkcert pems were
   > never committed (root .gitignore covers them; `git log --all` empty), so no history
   > purge was needed. But the .dockerignore rule was still outstanding: the builder
-  > stage's `COPY . .` ([frontend/Dockerfile](../frontend/Dockerfile) line 5) pulled the
+  > stage's `COPY . .` ([frontend/Dockerfile](../../frontend/Dockerfile) line 5) pulled the
   > working-tree pems into the build context / builder layer / cache. Verified with a
   > throwaway `busybox` + `COPY . /ctx` build against the real context: pems now absent
   > (OK_NO_PEM_IN_CONTEXT). The multi-stage runtime image was already clean; this closes
   > the builder side. Prod de-reference is moot (no docker-compose.prod.yaml yet; Phase
   > 3.5 mounts Let's Encrypt certs, not mkcert pems).
-  **How:** Add `*.pem` to [frontend/.dockerignore](../frontend/.dockerignore) (it lists
+  **How:** Add `*.pem` to [frontend/.dockerignore](../../frontend/.dockerignore) (it lists
   only `node_modules`/`.next`/`.env*.local` today) and don't reference the mkcert files in
   prod config. *(Corrected: the pems were never committed — root `.gitignore` covers
   `*.pem` and `git log --all` is empty for them — so no rotation or history purge is
@@ -313,9 +314,9 @@ is the last thing you wire because it automates a process you've already proven 
   > (main.py DAILY_LIMIT_BYPASS warning; auth.py callback failure; 5 in
   > spotify_ingest_service.py) to per-module `logging.getLogger(__name__)` at
   > level-appropriate calls (info/warning/error, `%`-style lazy args). Added
-  > `logging.basicConfig` at startup in [main.py](../backend/app/main.py) with an
+  > `logging.basicConfig` at startup in [main.py](../../backend/app/main.py) with an
   > env-driven `LOG_LEVEL` (default INFO; documented in
-  > [.env.example](../backend/.env.example)) and a timestamp/level/name format, so
+  > [.env.example](../../backend/.env.example)) and a timestamp/level/name format, so
   > output now has levels/timestamps and can be routed or silenced. `auth.py`
   > deliberately logs only `type(e).__name__` (no traceback) to preserve the S2
   > no-sensitive-data guard on the OAuth callback; since that log moved stdout->stderr,
@@ -336,7 +337,7 @@ is the last thing you wire because it automates a process you've already proven 
 ## Phase 2 — Harden the Docker images
 
 - [x] **2.1 Add `backend/.dockerignore`.**
-  > **Code landed 2026-07-25.** Added [backend/.dockerignore](../backend/.dockerignore)
+  > **Code landed 2026-07-25.** Added [backend/.dockerignore](../../backend/.dockerignore)
   > (none existed; the backend Dockerfile's bare `COPY . .` was baking everything in).
   > Excludes `tests/`, `pytest.ini`, `test-requirements.txt`, `.pytest_cache/`, `agents/`,
   > `__pycache__/`, `*.pyc`/`*.pyo`, `.env*`, and `*.pem`; keeps `app/` (incl.
@@ -353,18 +354,18 @@ is the last thing you wire because it automates a process you've already proven 
   `agents/`, `__pycache__/`, `*.pyc`, `.env*`, and any local certs/scratch. **Keep**
   `app/` (including `app/models/*.pb` — the runtime TF model), `alembic/`, `alembic.ini`,
   `backend_requirements.txt`. (CI mounts the test files back in — see 8.1.)
-  **Why:** The current backend [Dockerfile](../backend/Dockerfile) does `COPY . .` with no
+  **Why:** The current backend [Dockerfile](../../backend/Dockerfile) does `COPY . .` with no
   ignore file, baking tests/cache/agents into the image — larger images, slower pulls, more
-  attack surface. (The frontend already has a [.dockerignore](../frontend/.dockerignore).)
+  attack surface. (The frontend already has a [.dockerignore](../../frontend/.dockerignore).)
 
 - [x] **2.2 Run both images as a non-root user.**
-  > **Code landed 2026-07-25.** Backend [Dockerfile](../backend/Dockerfile): `useradd
+  > **Code landed 2026-07-25.** Backend [Dockerfile](../../backend/Dockerfile): `useradd
   > --create-home app` + `USER app` before CMD. **Non-obvious:** the ingest path writes
   > downloaded audio under `app/services/downloads`
-  > ([spotify_ingest_service.py:27-33](../backend/app/services/spotify_ingest_service.py#L27-L33)
+  > ([spotify_ingest_service.py:27-33](../../backend/app/services/spotify_ingest_service.py#L27-L33)
   > — `mkdir` + `mkdtemp`), so that one dir is pre-created and `chown`ed to `app`; the rest
   > of `/app` stays root-owned and read-only (a compromised process can't rewrite app code).
-  > Frontend [Dockerfile](../frontend/Dockerfile): `USER node` (the image's built-in uid-1000
+  > Frontend [Dockerfile](../../frontend/Dockerfile): `USER node` (the image's built-in uid-1000
   > user) in the runtime stage — the standalone server only reads the root-owned,
   > world-readable files and writes nothing. Verified by building both and running: backend
   > `whoami`=`app`/uid 1000, downloads dir writable, `/app/app` code write **denied**;
@@ -377,9 +378,9 @@ is the last thing you wire because it automates a process you've already proven 
 - [x] **2.3 Add a `HEALTHCHECK` to each image.**
   > **Code landed 2026-07-25.** Both base images lack `curl`, so instead of adding a
   > package the probes reuse the runtime already present: backend
-  > [Dockerfile](../backend/Dockerfile) runs `python -c` (urllib) against the existing
-  > `/health` liveness endpoint ([health.py](../backend/app/api/v1/health.py), shipped in
-  > 1.1); frontend [Dockerfile](../frontend/Dockerfile) runs `node -e` (http) against `/`.
+  > [Dockerfile](../../backend/Dockerfile) runs `python -c` (urllib) against the existing
+  > `/health` liveness endpoint ([health.py](../../backend/app/api/v1/health.py), shipped in
+  > 1.1); frontend [Dockerfile](../../frontend/Dockerfile) runs `node -e` (http) against `/`.
   > Timing: `--interval=30s --timeout=5s --retries=3`, with `--start-period=40s` on the
   > backend (covers the TF model load) and `10s` on the frontend. **Found + fixed a real
   > prod bug while verifying:** Next's standalone `server.js` binds to
@@ -396,10 +397,10 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **2.4 Pin base images and keep the build lean.**
   > **Code landed 2026-07-25.** Pinned `spotdl` → **`spotdl==4.5.2`** in
-  > [backend_requirements.txt](../backend/backend_requirements.txt) (it was the only
+  > [backend_requirements.txt](../../backend/backend_requirements.txt) (it was the only
   > unpinned dep; 4.5.2 is what pip was already resolving, so no behavior change — just
   > reproducibility). Everything else was already in place: `--no-cache-dir` present
-  > ([Dockerfile](../backend/Dockerfile) pip step), `ffmpeg` installed (apt step), bases
+  > ([Dockerfile](../../backend/Dockerfile) pip step), `ffmpeg` installed (apt step), bases
   > kept on their tags. **Deliberately did NOT pin bases by digest:** the tags
   > `python:3.11-slim-bookworm` / `node:20-alpine` float to patched OS layers each build,
   > which is what drains the base-image CVE backlog the IDE flags; a digest pin would
@@ -408,7 +409,7 @@ is the last thing you wire because it automates a process you've already proven 
   > float to track YouTube changes or downloads break. Verified: full rebuild is green,
   > `spotdl` reports 4.5.2 and imports, `ffmpeg` present in the image.
   **How:** Keep `python:3.11-slim-bookworm` / `node:20-alpine`; consider pinning by digest.
-  Pin `spotdl` in [backend_requirements.txt](../backend/backend_requirements.txt) — it's
+  Pin `spotdl` in [backend_requirements.txt](../../backend/backend_requirements.txt) — it's
   bare today, so every build can resolve a different version of the tool driving the whole
   download path. Backend is mostly binary wheels, so a heavy multi-stage split isn't
   required — but ensure `--no-cache-dir` (already present) and that `ffmpeg` (needed by
@@ -427,13 +428,13 @@ is the last thing you wire because it automates a process you've already proven 
   > dropped arg now **fails the build loudly** (verified: no-arg build errors with the
   > guard message). (2) A stray local `.env.production` (`127.0.0.1`) entered the build
   > context and looked authoritative though it was shadowed — broadened
-  > [frontend/.dockerignore](../frontend/.dockerignore) `.env*.local` → `.env*` so no local
+  > [frontend/.dockerignore](../../frontend/.dockerignore) `.env*.local` → `.env*` so no local
   > env file can reach the context (build-arg is the sole source). Note: `.env.production`/
   > `.env.local` are **gitignored/untracked** (local-only, never in CI), so the `.dockerignore`
   > rule is the committable neutralization; the files themselves need no repo change.
   **How:** The image must be built with `--build-arg NEXT_PUBLIC_API_URL=https://putyouon.app`
   (wired in CI, Phase 8). Today compose passes `https://127.0.0.1`
-  ([docker-compose.yaml:20](../docker-compose.yaml#L20)).
+  ([docker-compose.yaml:20](../../docker-compose.yaml#L20)).
   **Why:** `NEXT_PUBLIC_*` values are **inlined into the client bundle at build time**. A
   wrong value can't be fixed at runtime — the browser would call `127.0.0.1`.
 
@@ -442,8 +443,8 @@ is the last thing you wire because it automates a process you've already proven 
 ## Phase 3 — Production docker-compose
 
 - [x] **3.1 Create `docker-compose.prod.yaml` (keep the dev one for local).**
-  > **Code landed 2026-08-04.** Added [docker-compose.prod.yaml](../docker-compose.prod.yaml)
-  > (dev [docker-compose.yaml](../docker-compose.yaml) kept + separately repaired, see below).
+  > **Code landed 2026-08-04.** Added [docker-compose.prod.yaml](../../docker-compose.prod.yaml)
+  > (dev [docker-compose.yaml](../../docker-compose.yaml) kept + separately repaired, see below).
   > **Image reference is fully parameterized** — `image: ${BACKEND_IMAGE}` /
   > `${FRONTEND_IMAGE}`, not a hardcoded ECR URI — so the deploy step (8.3) supplies the
   > whole ref including the git-SHA tag. Chosen over baking `<acct>.dkr.ecr…:${IMAGE_TAG}`
@@ -459,7 +460,7 @@ is the last thing you wire because it automates a process you've already proven 
 - [x] **3.2 Remove the DB service and the broken dependency.**
   > **Code landed 2026-08-04.** The prod compose has **no `db` service** and no
   > `depends_on: db`; backend reaches RDS purely via `POSTGRES_*` from `.env-postgres`
-  > (confirmed the exact names at [database.py:10-14](../backend/app/db/database.py#L10-L14):
+  > (confirmed the exact names at [database.py:10-14](../../backend/app/db/database.py#L10-L14):
   > `POSTGRES_DB/USER/PASSWORD/HOST/PORT`). **The dev compose was separately repaired**
   > (decision: in-scope this phase): the commented `db` block was restored as a real
   > `pgvector/pgvector:pg16` service *with a `pg_isready` healthcheck*, and backend's
@@ -469,7 +470,7 @@ is the last thing you wire because it automates a process you've already proven 
   > drops the db.
   **How:** Delete the commented `db` block and `depends_on: [db]`. The backend reaches RDS
   via `POSTGRES_HOST=<rds-endpoint>` (plus `POSTGRES_PORT/DB/USER/PASSWORD`) from env
-  (Phase 5) — those are the names [database.py](../backend/app/db/database.py) reads.
+  (Phase 5) — those are the names [database.py](../../backend/app/db/database.py) reads.
   **Why:** Today's compose references a `db` service that doesn't exist, so `backend` can't
   start. RDS is your database now.
 
@@ -480,7 +481,7 @@ is the last thing you wire because it automates a process you've already proven 
   > healthy, nginx waits on **both** backend and frontend healthy — leaning on the
   > `HEALTHCHECK`s already baked into both images in 2.3 (no compose-level healthcheck
   > needed for those). nginx itself gets no healthcheck (nothing depends on it) and keeps
-  > its service name so the existing [nginx.conf](../nginx/nginx.conf) `frontend:3000` /
+  > its service name so the existing [nginx.conf](../../nginx/nginx.conf) `frontend:3000` /
   > `backend:8000` upstreams still resolve on the shared network. Verified via
   > `docker compose config`: the render shows the healthy conditions, restart policy, and
   > log caps on every service.
@@ -514,7 +515,7 @@ is the last thing you wire because it automates a process you've already proven 
   > webroot is a **host bind-mount, not a compose service** — Certbot runs on the box (Phase
   > 7) and writes the HTTP-01 challenge into `/var/www/certbot`; nginx only needs to *read*
   > it, hence `:ro`. **Scope note:** this item is only the compose *wiring*. The
-  > [nginx.conf](../nginx/nginx.conf) *contents* still reference the dev `/certs` pems and
+  > [nginx.conf](../../nginx/nginx.conf) *contents* still reference the dev `/certs` pems and
   > have no server_name/redirect/forwarded-headers — that rewrite is **Phase 4**, and this
   > prod stack isn't run until the instance exists (Phase 6+), so the interim mismatch never
   > executes.
@@ -528,10 +529,10 @@ is the last thing you wire because it automates a process you've already proven 
 ## Phase 4 — Production nginx config
 
 - [x] **4.1 Real `server_name` + HTTP→HTTPS redirect + ACME challenge.**
-  > **Code landed 2026-08-06.** Phase 4 is a **separate [nginx.prod.conf](../nginx/nginx.prod.conf)**
-  > (the dev [nginx.conf](../nginx/nginx.conf) keeps mkcert localhost certs — cert paths
+  > **Code landed 2026-08-06.** Phase 4 is a **separate [nginx.prod.conf](../../nginx/nginx.prod.conf)**
+  > (the dev [nginx.conf](../../nginx/nginx.conf) keeps mkcert localhost certs — cert paths
   > genuinely differ, so a two-file split mirrors the two-compose pattern rather than an
-  > envsubst template). [docker-compose.prod.yaml](../docker-compose.prod.yaml) now mounts
+  > envsubst template). [docker-compose.prod.yaml](../../docker-compose.prod.yaml) now mounts
   > `nginx.prod.conf` at `/etc/nginx/nginx.conf`. The `:80` server has
   > `server_name putyouon.app;`, `location /.well-known/acme-challenge/ { root /var/www/certbot; }`
   > (the webroot bind-mounted in 3.5), and `return 301 https://$host$request_uri;` for
@@ -549,13 +550,13 @@ is the last thing you wire because it automates a process you've already proven 
   > inherited `proxy_set_header`s — DRY without repetition). This is what makes uvicorn's
   > `--proxy-headers` (1.4) see the real client IP, so `slowapi` keys the unauthenticated
   > login limits per-user instead of one site-wide nginx bucket. **Backported the same
-  > headers to the dev [nginx.conf](../nginx/nginx.conf)** (decision: keep dev/prod aligned)
+  > headers to the dev [nginx.conf](../../nginx/nginx.conf)** (decision: keep dev/prod aligned)
   > so dev exercises the same IP-keyed rate limiting. Confirmed the app reads these:
-  > HSTS/scheme + slowapi at [main.py:60-102](../backend/app/main.py#L60-L102).
+  > HSTS/scheme + slowapi at [main.py:60-102](../../backend/app/main.py#L60-L102).
   **How:** On the proxy locations add `proxy_set_header X-Forwarded-Proto $scheme;`,
   `X-Forwarded-For $proxy_add_x_forwarded_for;`, `X-Real-IP $remote_addr;`, `Host $host;`.
   **Why:** The backend runs `--proxy-headers` and uses these for HSTS correctness and for
-  `slowapi` to rate-limit by real client IP. Today's [nginx.conf](../nginx/nginx.conf) only
+  `slowapi` to rate-limit by real client IP. Today's [nginx.conf](../../nginx/nginx.conf) only
   sets `Host`.
 
 - [x] **4.3 Raise timeouts and body limits for the ML path.**
@@ -565,7 +566,7 @@ is the last thing you wire because it automates a process you've already proven 
   > (no `UploadFile`/`File`/multipart anywhere in `backend/app`; audio is fetched server-side
   > by spotdl), so bodies are small JSON and 10m is generous headroom, not a real constraint.
   > Also added a dedicated **`location /health` → backend** (root-mounted, no `/api` prefix —
-  > [health.py:10](../backend/app/api/v1/health.py#L10)) so the external uptime monitor (9.2)
+  > [health.py:10](../../backend/app/api/v1/health.py#L10)) so the external uptime monitor (9.2)
   > and nginx upstream check hit a stable path instead of falling through to the frontend.
   > Both landed in prod and dev.
   **How:** `client_max_body_size` to a sane cap, and bump `proxy_read_timeout` /
@@ -582,7 +583,7 @@ is the last thing you wire because it automates a process you've already proven 
   > (1) **OCSP stapling omitted** — Let's Encrypt **retired OCSP in 2025** (issued certs no
   > longer carry an OCSP URL), so `ssl_stapling` would be inert and log a warning on every
   > reload; documented inline. (2) **HSTS not set in nginx** — the app already emits it via
-  > the `ENABLE_HSTS` middleware ([main.py:90-92](../backend/app/main.py#L90-L92)); setting it
+  > the `ENABLE_HSTS` middleware ([main.py:90-92](../../backend/app/main.py#L90-L92)); setting it
   > here too would duplicate the header. Both configs pass **`nginx -t`** on nginx 1.29.7
   > (`test is successful`) — run in a throwaway `nginx:alpine` with a host-generated cert
   > bind-mounted at the LE path and `--add-host backend/frontend:127.0.0.1` so the literal
@@ -601,10 +602,10 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **5.1 Define a parameter namespace.**
   > **Code landed 2026-08-11.** The namespace is now defined *as code* in a new
-  > [deploy/](../deploy/) dir: [deploy/ssm-parameters.md](../deploy/ssm-parameters.md) is the
+  > [deploy/](../../deploy/) dir: [deploy/ssm-parameters.md](../../deploy/ssm-parameters.md) is the
   > authoritative manifest (every param, `SecureString` vs `String`, required?, notes), and
-  > [deploy/ssm-seed.sh](../deploy/ssm-seed.sh) creates/updates them from a **gitignored**
-  > local values file ([deploy/prod.env.example](../deploy/prod.env.example) is the committed
+  > [deploy/ssm-seed.sh](../../deploy/ssm-seed.sh) creates/updates them from a **gitignored**
+  > local values file ([deploy/prod.env.example](../../deploy/prod.env.example) is the committed
   > template; `deploy/prod.env` is ignored). **KMS decision: AWS-managed `alias/aws/ssm`**
   > (free, no `--key-id` needed) — so the Phase-0 `kms:Decrypt` placeholder tightens to that
   > key's ARN (`aws kms describe-key --key-id alias/aws/ssm`). Type split: SecureString for
@@ -616,7 +617,7 @@ is the last thing you wire because it automates a process you've already proven 
   > against a fake `aws`).
   **How:** Store each secret as a **SecureString** under `/putyouon/prod/…`:
   `SESSION_SECRET`, **`TOKEN_ENCRYPTION_KEYS`** (required — both the app and alembic
-  refuse to start without it, [crypto.py](../backend/app/core/crypto.py)),
+  refuse to start without it, [crypto.py](../../backend/app/core/crypto.py)),
   `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SENTRY_DSN`, and the `POSTGRES_*` DB
   credentials/host. Store the **non-secret config in the same path as `String` params** so
   5.2 materializes the full contract in one pull: `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`,
@@ -628,7 +629,7 @@ is the last thing you wire because it automates a process you've already proven 
   repo, the image, or CI logs.
 
 - [x] **5.2 Materialize secrets at deploy time.**
-  > **Code landed 2026-08-11.** [deploy/materialize-env.sh](../deploy/materialize-env.sh)
+  > **Code landed 2026-08-11.** [deploy/materialize-env.sh](../../deploy/materialize-env.sh)
   > runs `aws ssm get-parameters-by-path --path /putyouon/prod --with-decryption --output
   > json` (JSON, not `--output text`, so URL/base64/special-char values survive; the CLI
   > auto-paginates so param count doesn't matter) and splits by name: `POSTGRES_*` →
@@ -648,21 +649,21 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** Keeps the app's existing `env_file` contract (minimal app change) while the source
   of truth stays in SSM. Files are root-only and regenerated each deploy. Note: compose
   `env_file:` injection is **mandatory** — the in-code dotenv fallbacks
-  ([main.py:8](../backend/app/main.py#L8), [database.py](../backend/app/db/database.py))
+  ([main.py:8](../../backend/app/main.py#L8), [database.py](../../backend/app/db/database.py))
   resolve to `/` inside the image and are silent no-ops; don't "fix" a config problem by
   baking env files into the image.
 
 - [x] **5.3 Keep `.env.example` authoritative, never commit real env.**
-  > **Code landed 2026-08-11.** [backend/.env.example](../backend/.env.example) +
-  > [backend/.env-postgres.example](../backend/.env-postgres.example) were already complete
+  > **Code landed 2026-08-11.** [backend/.env.example](../../backend/.env.example) +
+  > [backend/.env-postgres.example](../../backend/.env-postgres.example) were already complete
   > (every var documented from Phases 1/2), so this was mostly upkeep: added a header pointer
-  > from `.env.example` to [deploy/ssm-parameters.md](../deploy/ssm-parameters.md) (the prod
+  > from `.env.example` to [deploy/ssm-parameters.md](../../deploy/ssm-parameters.md) (the prod
   > contract) so the two stay linked, and confirmed `.gitignore` keeps real env out — its
   > `.env*` rule doesn't match `deploy/prod.env` (name doesn't start with `.env`), so added an
   > explicit `deploy/prod.env` ignore while leaving the `deploy/prod.env.example` template
   > tracked.
   **How:** `.gitignore` already covers `.env-*` (keep it). Update
-  [backend/.env.example](../backend/.env.example) whenever a var is added.
+  [backend/.env.example](../../backend/.env.example) whenever a var is added.
   **Why:** New contributors and the deploy script both rely on the example as the contract.
 
 ---
@@ -679,7 +680,7 @@ is the last thing you wire because it automates a process you've already proven 
 > than after two machines have both pushed.
 
 - [ ] **A.1 Bring the working machine up to full capability.**
-  **How:** Follow [set_up_new_machine.md](set_up_new_machine.md). For Phase 6
+  **How:** Follow [set_up_new_machine.md](../set_up_new_machine.md). For Phase 6
   specifically only the *AWS / deployment work* section is required — AWS CLI v2 +
   credentials, the Session Manager plugin, a psql client, and Porkbun access. The app
   development section (fonts, mkcert, env files, venvs) can wait until you actually
@@ -695,7 +696,7 @@ is the last thing you wire because it automates a process you've already proven 
   > **Done 2026-09-18.** Seeded from a new machine using CLI credentials for an IAM user,
   > not a root access key, in `us-east-1`. `SENTRY_DSN` was left blank on purpose: the seed
   > script skips empty values, so no parameter exists and
-  > [main.py](../backend/app/main.py) skips Sentry init. To turn Sentry on later, fill it in
+  > [main.py](../../backend/app/main.py) skips Sentry init. To turn Sentry on later, fill it in
   > `deploy/prod.env`, re-run the seed, and redeploy.
   **How:** `cp deploy/prod.env.example deploy/prod.env`, fill in real production values,
   then `./deploy/ssm-seed.sh`. Verify with
@@ -712,7 +713,7 @@ is the last thing you wire because it automates a process you've already proven 
   truth** — pull from it rather than keeping a second copy.
 
 - [x] **A.3 CI workflow — test on every PR and push.** *(Pulled forward from 8.1.)*
-  > **Landed 2026-09-18 (PR #11).** [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+  > **Landed 2026-09-18 (PR #11).** [.github/workflows/ci.yml](../../.github/workflows/ci.yml)
   > runs `backend` (image build with GHA layer cache, pytest inside it as `app`) and
   > `frontend` (fonts from the private fonts repo, Node 20, lint, build) on every PR and
   > push to `main`. First run green on the PR: backend 2m23s (cold cache), frontend 35s.
@@ -747,7 +748,7 @@ is the last thing you wire because it automates a process you've already proven 
 > **Revised 2026-09-18 — read before any item below.** Three things changed since this
 > phase was written:
 > - **Terraform now owns Phase 6's resources** (6.0). The "gameplan checkboxes are the
->   infrastructure state file" rule in [set_up_new_machine.md](set_up_new_machine.md) no
+>   infrastructure state file" rule in [set_up_new_machine.md](../set_up_new_machine.md) no
 >   longer applies to anything Terraform manages: remote state is the record, and
 >   `terraform plan` from either machine shows what exists.
 > - **The RDS instance no longer exists.** `put-you-on-instance-2` was deleted on
@@ -784,7 +785,7 @@ is the last thing you wire because it automates a process you've already proven 
     backend block of a public repo.
   - **Locking with S3 lock files** (`use_lockfile = true`, Terraform ≥ 1.10). No
     DynamoDB table.
-  - **Code in [infra/](../infra/)**, one root module, no modules or workspaces (one
+  - **Code in [infra/](../../infra/)**, one root module, no modules or workspaces (one
     environment). Commit `.terraform.lock.hcl` (pins provider versions for both
     machines); ignore `.terraform/` and any local `*.tfstate*`.
   - **What Terraform manages:** everything new in Phase 6 (instance, security groups,
@@ -827,7 +828,7 @@ is the last thing you wire because it automates a process you've already proven 
   >
   > **Two consequences to handle before the first deploy:**
   > - The backend's `mem_limit: 2g` in
-  >   [docker-compose.prod.yaml](../docker-compose.prod.yaml) (3.4) equals all the RAM
+  >   [docker-compose.prod.yaml](../../docker-compose.prod.yaml) (3.4) equals all the RAM
   >   on this host, so it no longer protects anything. Measure the backend under a
   >   couple of concurrent ingests on the box, then set the cap below host RAM (likely
   >   ~1.2 GB). *(Set to `1200m` on 2026-09-20. **Measured after the first deploy:**
@@ -874,7 +875,7 @@ is the last thing you wire because it automates a process you've already proven 
   > 25.0.14 enabled, Compose v5.5.1, 2 GB swap active, `/var/www/certbot` present, and
   > IMDS returns 401 without a token (IMDSv2 enforced).
   > **Revised 2026-09-18:** done at first boot by the instance's `user_data` (in
-  > [infra/](../infra/)), not by hand.
+  > [infra/](../../infra/)), not by hand.
   > - **Docker:** `dnf install docker`, enabled on boot.
   > - **Compose plugin:** AL2023's repos don't ship `docker-compose-plugin`, so it is
   >   downloaded from Docker's GitHub release, pinned to a version, and checked against
@@ -951,7 +952,7 @@ is the last thing you wire because it automates a process you've already proven 
   >   address.
   **How:** The database is already live (`pyo_db`: migrations applied, ~110k rows, genre
   backfill done — see
-  [backend-optimization-remaining.md](../backend/agents/backend-optimization-remaining.md)),
+  [backend-optimization-remaining.md](../../backend/agents/backend-optimization-remaining.md)),
   so this is **verification, not setup**: confirm `CREATE EXTENSION IF NOT EXISTS vector;`
   is a no-op, confirm the app's DB user privileges, and confirm reachability from the
   instance SG (6.2). The schema reconcile + stamp happens in 1.2/10.1; the HNSW rebuild in
@@ -967,7 +968,7 @@ is the last thing you wire because it automates a process you've already proven 
   > **Landed 2026-09-19.** Certificate for **`putyouon.app`** (apex only, per 4.1):
   > ECDSA, serial `6c3e…f6f`, expires **2026-12-19**, at the
   > `/etc/letsencrypt/live/putyouon.app/` paths
-  > [nginx.prod.conf](../nginx/nginx.prod.conf) already points at. Registered to
+  > [nginx.prod.conf](../../nginx/nginx.prod.conf) already points at. Registered to
   > `bframoslopez@gmail.com`, so Let's Encrypt emails a warning if renewal ever breaks.
   >
   > AL2023 has no `certbot` package and no EPEL, so Certbot runs as the
@@ -999,7 +1000,7 @@ is the last thing you wire because it automates a process you've already proven 
 - [x] **7.2 Automate renewal + nginx reload.**
   > **Landed 2026-09-19.** `certbot-renew.timer` (enabled) runs `certbot-renew.service`
   > at 03:00 and 15:00 with up to an hour of jitter, `Persistent=true`. Definitions live
-  > in [infra/user-data.sh](../infra/user-data.sh), so a rebuilt instance gets them; they
+  > in [infra/user-data.sh](../../infra/user-data.sh), so a rebuilt instance gets them; they
   > were installed on the running box by hand, since `ignore_changes = [user_data]`
   > means edits don't re-run on an existing instance.
   >
@@ -1058,11 +1059,11 @@ is the last thing you wire because it automates a process you've already proven 
   **How:**
   - **Backend:** build the backend image, then run the tests **in a container from that
     image**, mounting the test files back in (2.1 excludes them from the image, and pytest
-    lives in [test-requirements.txt](../backend/test-requirements.txt), not the image):
+    lives in [test-requirements.txt](../../backend/test-requirements.txt), not the image):
     `docker run -v ./backend/tests:/app/tests -v ./backend/pytest.ini:/app/pytest.ini -v
     ./backend/test-requirements.txt:/app/test-requirements.txt <image> sh -c "pip install
     -r test-requirements.txt && python -m pytest -p no:cacheprovider"`. No extra env
-    wiring needed — [conftest.py](../backend/tests/conftest.py) injects all required env
+    wiring needed — [conftest.py](../../backend/tests/conftest.py) injects all required env
     vars. Cache pip layers.
     *(Corrected 2026-09-18: the original ended in a bare `pytest`, which fails with
     `pytest: not found`. The image runs as the non-root `app` user (2.2), so pip falls
@@ -1079,7 +1080,7 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **8.2 Build & Push workflow — on merge to `main`.**
   > **Landed 2026-09-20** as the `build` job of
-  > [.github/workflows/deploy.yml](../.github/workflows/deploy.yml). OIDC into the 0.5
+  > [.github/workflows/deploy.yml](../../.github/workflows/deploy.yml). OIDC into the 0.5
   > role, ECR login, both images pushed with the git SHA and `latest`, fonts from the
   > private repo (A.3), GHA layer cache on its own scopes so it doesn't race ci.yml's
   > backend build. The registry host comes from the ECR login output and the role ARN
@@ -1102,7 +1103,7 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **8.3 Deploy workflow — `ssm:SendCommand` to the instance.**
   > **Landed 2026-09-20** as the `deploy` job plus
-  > [deploy/deploy.sh](../deploy/deploy.sh), which runs on the instance. The 7 steps
+  > [deploy/deploy.sh](../../deploy/deploy.sh), which runs on the instance. The 7 steps
   > below are unchanged; what the plan didn't say:
   > - **The 8.3 gap is closed by a git checkout.** The deploy installs `git` (not on the
   >   AMI), clones the public repo to `/opt/putyouon` once, then fetches and checks out
@@ -1153,8 +1154,8 @@ is the last thing you wire because it automates a process you've already proven 
   4. runs `alembic upgrade head` via `docker compose -f docker-compose.prod.yaml run --rm
      backend alembic upgrade head` — compose `run` (not a bare `docker run`) so `env_file:`
      supplies `POSTGRES_*` **and** `TOKEN_ENCRYPTION_KEYS`, both required by the alembic
-     import chain ([env.py](../backend/alembic/env.py) →
-     [crypto.py](../backend/app/core/crypto.py)). First deploy runs only after 1.2's
+     import chain ([env.py](../../backend/alembic/env.py) →
+     [crypto.py](../../backend/app/core/crypto.py)). First deploy runs only after 1.2's
      reconcile + stamp has landed (see 10.1),
   5. `docker compose … up -d`,
   6. polls `/health` until green (fail the job if it doesn't recover),
@@ -1182,8 +1183,8 @@ is the last thing you wire because it automates a process you've already proven 
 
 - [x] **9.1 Metrics + dashboards: follow the observability plan.**
   > **Landed 2026-09-23, deliberately reduced.** One agent, not three: a `grafana/alloy`
-  > service in [docker-compose.prod.yaml](../docker-compose.prod.yaml) using Alloy's
-  > **built-in unix exporter** ([observability/config.alloy](../observability/config.alloy)),
+  > service in [docker-compose.prod.yaml](../../docker-compose.prod.yaml) using Alloy's
+  > **built-in unix exporter** ([observability/config.alloy](../../observability/config.alloy)),
   > remote-writing host CPU/memory/disk/network to Grafana Cloud every 60s.
   > - **cAdvisor and the app's `/metrics` are deferred.** The box has 2 GB (6.1);
   >   cAdvisor is the heaviest of the plan's three agents and app instrumentation is a
@@ -1193,10 +1194,10 @@ is the last thing you wire because it automates a process you've already proven 
   >   ~52 MB against a 200m cap; the host mount is read-only.
   > - Not on the app network and the UI isn't exposed: it only talks outbound.
   > - Credentials: `GRAFANA_PROM_URL` / `_USER` / `_TOKEN` in SSM, routed by
-  >   [materialize-env.sh](../deploy/materialize-env.sh) into a **third** env file,
+  >   [materialize-env.sh](../../deploy/materialize-env.sh) into a **third** env file,
   >   `.env-observability`, so a Grafana token never enters the app's environment.
   >   Seeding path updated: `ssm-seed.sh` allowlist, `prod.env.example`,
-  >   [ssm-parameters.md](../deploy/ssm-parameters.md).
+  >   [ssm-parameters.md](../../deploy/ssm-parameters.md).
   > - Series count is ~1,000-1,300 at 60s, well inside the free tier's 10k.
   > - **Live 2026-09-24.** Credentials seeded (stack `prometheus-prod-36-prod-us-west-0`),
   >   Alloy restarted, WAL replayed and no send failures. *(First attempt shipped the
@@ -1211,13 +1212,13 @@ is the last thing you wire because it automates a process you've already proven 
   **Why:** One collection stack, already decided and sized for this instance.
 
 - [x] **9.2 Minimal alarms on the things that page you.**
-  > **Landed 2026-09-23** in [infra/monitoring.tf](../infra/monitoring.tf): SNS topic
+  > **Landed 2026-09-23** in [infra/monitoring.tf](../../infra/monitoring.tf): SNS topic
   > `putyouon-alerts` + email subscription, and 7 alarms, all confirmed `OK`.
   > **AWS-published:** EC2 status check, RDS free storage (<3 GB), RDS connections (>80
   > of ~112 max), RDS CPU credit balance (<30 — the unlimited-mode *cost* risk from 6.5).
   > **Self-reported**, because AWS can't see them: `putyouon-metrics.timer` publishes
   > `SiteUp`, `CertDaysRemaining` and `DiskUsedPercent` to `putyouon/instance` every 5
-  > minutes (script + units in [user-data.sh](../infra/user-data.sh), installed on the
+  > minutes (script + units in [user-data.sh](../../infra/user-data.sh), installed on the
   > running box by hand since `ignore_changes = [user_data]`).
   > - **`SiteUp` uses `treat_missing_data = "breaching"`**, so a dead instance alarms
   >   instead of going quiet. That also means the metric must flow *before* the alarm
@@ -1301,7 +1302,7 @@ is the last thing you wire because it automates a process you've already proven 
   `alembic_version` is `b8c9d0e1f2a3` (the pre-1.2 repo head — now **deleted** by the
   squash, so it no longer exists in the chain). Then **`alembic stamp 45f91add221e`** to
   point the live DB at the new squashed baseline
-  ([45f91add221e](../backend/alembic/versions/45f91add221e_baseline_schema.py)) — `stamp`
+  ([45f91add221e](../../backend/alembic/versions/45f91add221e_baseline_schema.py)) — `stamp`
   only rewrites `alembic_version`, it does **not** re-run any `CREATE TABLE`, so it's safe
   against the already-populated RDS. Then `alembic upgrade head` (a no-op at cutover — the
   baseline *is* head) and confirm tables/indexes/`vector` columns match the models.
@@ -1388,12 +1389,12 @@ is the last thing you wire because it automates a process you've already proven 
   > so no daily dispatch was consumed.
   > **Note 2026-09-18:** the RDS instance is now Terraform-managed (6.5), so do the
   > scale-up and scale-down by changing `instance_class` in
-  > [infra/rds.tf](../infra/rds.tf) and applying. Resizing in the console would drift
+  > [infra/rds.tf](../../infra/rds.tf) and applying. Resizing in the console would drift
   > from Terraform. The DB is also private now, so run the hour-long index build from
   > an SSM shell on the instance under `tmux` or `nohup`, not through an SSM
   > port-forward from a laptop (those drop on idle).
   **How:** Run the Path A runbook in
-  [backend-optimization-remaining.md](../backend/agents/backend-optimization-remaining.md):
+  [backend-optimization-remaining.md](../../backend/agents/backend-optimization-remaining.md):
   scale RDS up, `CREATE INDEX … USING hnsw`, pass the EXPLAIN gate, scale back down, then
   land the query change. Coordinate with 10.1's stamp so the deploy pipeline never
   triggers the build itself.
@@ -1435,7 +1436,7 @@ is the last thing you wire because it automates a process you've already proven 
   >
   > **How it breaks (corrected 2026-09-25 — an earlier draft of this note had the
   > mechanism wrong).** It is not a stuck flag: `_run_process_top_tracks`'s `finally`
-  > ([songs.py:30](../backend/app/api/v1/songs.py#L30)) *does* clear `processing_users`.
+  > ([songs.py:30](../../backend/app/api/v1/songs.py#L30)) *does* clear `processing_users`.
   > It is an **infinite re-queue loop**. Every download fails → `process_top_tracks`
   > returns normally → the flag clears → `/status` says "ready" → the frontend
   > immediately calls `/song_recs/` → `snapshot_is_stale` is still true (0 processed of
@@ -1523,7 +1524,7 @@ is the last thing you wire because it automates a process you've already proven 
   the test the dev environment can't give you.
 
 - [x] **10.4 Document the rollback procedure.**
-  > **Written 2026-09-24: [deploy/runbook.md](../deploy/runbook.md).** Covers triage,
+  > **Written 2026-09-24: [deploy/runbook.md](../../deploy/runbook.md).** Covers triage,
   > both rollback paths, migration rollback and snapshot restore, instance rebuild with
   > the certificate caveat, and what each alarm means. It contains no account id,
   > instance id or secret — every command looks them up, so it stays safe in a public
@@ -1540,7 +1541,7 @@ is the last thing you wire because it automates a process you've already proven 
   >   restore.
   > **Done 2026-09-24 (found 2026-09-23).** `docker compose` run by hand on the box used
   > to **fail**: the compose file uses `${BACKEND_IMAGE}` / `${FRONTEND_IMAGE}` (3.1),
-  > which only existed inside [deploy/deploy.sh](../deploy/deploy.sh)'s environment, so a
+  > which only existed inside [deploy/deploy.sh](../../deploy/deploy.sh)'s environment, so a
   > plain `docker compose -f docker-compose.prod.yaml ps` errored with *"service backend
   > has neither an image nor a build context specified"* — mid-incident, which is exactly
   > when you reach for `ps`, `logs` or `down`. The deploy now writes both values to
@@ -1608,7 +1609,7 @@ is the last thing you wire because it automates a process you've already proven 
      and no index beyond the PK today.
   2. **`snapshot_is_stale` treats `ingest_failed_at IS NOT NULL` as terminal.** This is
      what breaks the loop — and it is also what protects the new columns, since
-     `add_user_top_songs` ([:118](../backend/app/services/spotify_ingest_service.py#L118))
+     `add_user_top_songs` ([:118](../../backend/app/services/spotify_ingest_service.py#L118))
      is an unconditional wipe-and-replace that only runs when the snapshot is stale.
   3. **Two guards against the 500 this otherwise creates.** With no usable seed,
      `query_recommendations` reaches `query_song = query_entry.song` on `None` and
@@ -1651,7 +1652,7 @@ is the last thing you wire because it automates a process you've already proven 
   > soon as a worker starts claiming, which is why 10.7 gates 11.4 step 1 rather than the
   > flag flip.
   >
-  > **The re-arm SQL in [runbook.md](../deploy/runbook.md) is currently a no-op**: both
+  > **The re-arm SQL in [runbook.md](../../deploy/runbook.md) is currently a no-op**: both
   > users are fully processed (20 rows, 20 with a song, 0 pending, 0 failed, 0 stored
   > errors), so nothing has gone terminal. That changes the moment a new user logs in with
   > the flag off — see 11.4's ordering warning.
@@ -1659,9 +1660,9 @@ is the last thing you wire because it automates a process you've already proven 
   > ---
   >
   > **Built and verified locally 2026-09-25, before the deploy.** Migration
-  > [d4e5f6a7b8c9](../backend/alembic/versions/d4e5f6a7b8c9_ingest_claim.py) (`claimed_at`),
-  > a token-gated queue at [`/api/v1/ingest/*`](../backend/app/api/v1/ingest.py), and a new
-  > top-level [`worker/`](../worker/). `INGEST_WORKER_ENABLED` defaults off, so merging
+  > [d4e5f6a7b8c9](../../backend/alembic/versions/d4e5f6a7b8c9_ingest_claim.py) (`claimed_at`),
+  > a token-gated queue at [`/api/v1/ingest/*`](../../backend/app/api/v1/ingest.py), and a new
+  > top-level [`worker/`](../../worker/). `INGEST_WORKER_ENABLED` defaults off, so merging
   > changes nothing in production until it is set.
   >
   > **The premise held, but not for the reason the plan assumed, and the difference
@@ -1745,7 +1746,7 @@ is the last thing you wire because it automates a process you've already proven 
   > - **Secrets leave AWS by hand.** The worker holds the Spotify client id/secret and the
   >   worker token, with no rotation story beyond re-seeding SSM.
   > - 10.5's open **un-terminal policy** question is still open. The re-arm is a documented
-  >   one-off SQL in [runbook.md](../deploy/runbook.md), to be run *after* the flag flips —
+  >   one-off SQL in [runbook.md](../../deploy/runbook.md), to be run *after* the flag flips —
   >   running it before means the still-deployed old code re-fails the rows first.
   **How:** A new top-level `worker/` runs on a machine with a residential connection —
   proven from a laptop first, with the Mac mini that already runs `data_pipeline` as its
@@ -1799,7 +1800,7 @@ is the last thing you wire because it automates a process you've already proven 
   > (a 1-dimension embedding for nonexistent seed 0) returned **422** with the short
   > `detail`, logged at ERROR, and reached Sentry — and changed nothing in the database.
   **How:** Found while asking "would we even know if onboarding broke?" — the answer was
-  no. In [worker/run.py](../worker/run.py), `client.complete` was wrapped in
+  no. In [worker/run.py](../../worker/run.py), `client.complete` was wrapped in
   `except SeedGone` only, so a **422 from embedding validation** escaped to the batch
   loop's generic handler, which logged "could not be reported" and moved on. The seed kept
   `song_id IS NULL`, **`ingest_attempts` unchanged** (only `/fail` advances it, and it was
@@ -1869,7 +1870,7 @@ is the last thing you wire because it automates a process you've already proven 
   > caught the most.
   **How:** Create the Sentry project, then seed the DSN and redeploy — `SENTRY_DSN` is
   already in `ssm-seed.sh`'s SecureString allowlist and
-  [prod.env.example](../deploy/prod.env.example), so no code or script change is needed:
+  [prod.env.example](../../deploy/prod.env.example), so no code or script change is needed:
   ```sh
   aws ssm put-parameter --name /putyouon/prod/SENTRY_DSN \
     --type SecureString --value 'https://...' --overwrite
@@ -1923,233 +1924,17 @@ is the last thing you wire because it automates a process you've already proven 
 
 ---
 
-## Phase 11 — First post-launch workstream: retire Spotify login (pipeline shakedown)
+## Phase 11 — moved
 
-> The app **launches as-is with Spotify OAuth** — the ~25-user dev-mode cap is accepted
-> at cutover. This phase then implements
-> [spotify-ingest-without-quota-plan.md](spotify-ingest-without-quota-plan.md) (email +
-> Google login, search-and-pick seeding, playlist import) as the **first real test of
-> the live CI/CD pipeline**: every step lands as a PR → CI (8.1) → merge → build/push
-> (8.2) → deploy (8.3), under branch protection (8.4).
+Phase 11 (retire the Spotify login, items 11.1–11.5) is now its own release plan:
+[pyo-0.0.1-sign-in-change.md](../pyo-0.0.1-sign-in-change.md), merged with the Spotify
+ingest plan and renumbered on 2026-10-02. Its opening table maps every 11.x reference in
+this file to the new step. 11.5 (the worker on the Mac mini) went to
+[deployment-deferred.md](../deployment-deferred.md).
 
-> **11.4 is done (2026-10-02), so 11.1 is unblocked.** It had to come first: 11.1 exists to
-> remove the ~25-user OAuth cap, i.e. to let more people sign up, and until the worker was
-> actually running every one of those signups would have failed its ingest and burned its
-> seeds to terminal. **The worker currently runs on a laptop** — new signups only ingest
-> while that machine is awake and running it, until 11.5.
+## Deferred / follow-up — moved
 
-- [ ] **11.1 Ship Phase A (identity) through the pipeline, item by item.**
-  **How:** Implement A1–A8 from that plan as individual PRs. **A1's migration is the
-  first live exercise of the deploy's `alembic upgrade head` step** (8.3 step 4): it
-  extends the chain 1.2 re-rooted, and 10.1's practice applies — take an RDS snapshot
-  before merging it. Before merging A5: create the Google OAuth client, register
-  `https://putyouon.app/api/v1/auth/google/callback`, and add `GOOGLE_CLIENT_SECRET`
-  (SecureString) + `GOOGLE_CLIENT_ID` / `GOOGLE_REDIRECT_URI` (String) under
-  `/putyouon/prod/` (5.1 pattern) — 5.2 materializes them on the next deploy with no
-  other change.
-  **Why:** A schema migration + a secrets change + rolling code changes is exactly the
-  deploy shape the pipeline exists for — better to shake it out on a planned workstream
-  than during an emergency.
-
-- [ ] **11.2 Retire the Spotify login in prod; re-run the smoke test.**
-  **How:** Once A6 deploys, the 1.6 Spotify redirect URI is retired and the 25-user cap
-  stops constraining signups. Repeat 10.3's smoke test against the real origin with
-  **email + Google logins** in place of the Spotify round-trip (cookies, CORS, TLS,
-  redirect returns).
-  **Why:** The cutover smoke test proved the Spotify flow; this proves its replacement
-  under the same real-origin conditions the dev environment can't reproduce.
-  > **This is also where the deferred half of 10.3 lands.** 10.3 proved the ML ingest on
-  > production with a forced seed, but the worker branch of `get_recs` for a *genuinely new
-  > account* has never run live: empty snapshot → seeds queued → `/status` `processing` →
-  > the worker claims them → first seed lands → dispatch. **Use the first new email or
-  > Google signup as that test**, and watch it end to end: the worker log (`Claimed N
-  > seed(s)`, then `done in …`), the `processing → ready` transition, a dispatch written
-  > for that user, and Sentry staying quiet. Note what a real signup will expose that the
-  > forced seed could not: roughly ten tracks at ~70 s each, so about twelve minutes to a
-  > full snapshot, and a first dispatch that locks in for the day against whatever subset
-  > has landed by then. Watch that once with real eyes before deciding it is acceptable.
-  >
-  > Depends on how seeds are created by then: if Phase B's search-and-pick has replaced
-  > `me/top/tracks`, the seeding step differs but the worker path from "unprocessed row
-  > exists" onward is identical.
-
-- [ ] **11.3 Ship Phases B and C (search-and-pick, playlist import) the same way.**
-  **How:** Continue the per-item PR cadence for B1–B6, then C1–C3. Two post-launch
-  cautions: 8.3's recreate kills in-flight ingests and there are now real users — merge
-  during quiet hours; and between Phase A and B5's picker, new registrants see only the
-  minimal `needs_seeds` state — bundle A7 + B5 into adjacent merges if that gap matters.
-  **Why:** Search-and-pick is the real onboarding once the cap is gone — Phase A without
-  B leaves new users a dashboard with nothing to seed it.
-
-- [x] **11.4 Turn the ingest worker on and prove it with a real new user. (Do this first.)**
-  > **Done 2026-10-02, with the new-user part carried forward to 11.2.** In the order this
-  > item requires: Sentry first (10.8); the worker started on the MacBook from a fresh
-  > `.venv.worker` — **not** an existing venv, whose yt-dlp 2026.03.x is the version measured
-  > failing — and confirmed polling production on its 60 s idle cadence (`20:54:15`,
-  > `20:55:16`, both 200); only then `INGEST_WORKER_ENABLED=true` and a redeploy. The worker
-  > rode through that restart without noticing. A forced seed then went through the full
-  > path in about a minute (see 10.3).
-  >
-  > One setup trap worth keeping: the worker calls `spotdl` **by name**, so whichever
-  > `spotdl` is first on PATH runs. With another venv active, the worker silently uses *that*
-  > venv's spotdl and its stale yt-dlp. Always run it from the activated `.venv.worker` and
-  > check `which spotdl`.
-  > This is what 10.6 does not cover. 10.6 built, deployed and verified the machinery; the
-  > flag is off and no worker is running, so **new users are still blocked**. Until this
-  > item is done, nothing has actually been fixed for anybody.
-  **Gated on 10.7 and 10.8**, and on **step 1**, not on the flag flip. The `/ingest/*`
-  routes are already live in production because `INGEST_WORKER_TOKEN` is seeded, so the
-  moment a worker starts claiming is the moment 10.7's silent retry loop becomes reachable —
-  well before `INGEST_WORKER_ENABLED` is touched. 10.8 comes first so that the first real
-  onboarding is the first one you can actually see.
-  **How:** Order matters, and getting it wrong costs a user their seeds.
-  1. **Start the worker before flipping the flag.** Any machine on a residential
-     connection: venv from [worker/worker_requirements.txt](../worker/worker_requirements.txt),
-     `worker/.env` filled in, a JavaScript runtime on PATH, then
-     `PYTHONPATH=backend python worker/run.py`. It will poll and find nothing, which is the
-     correct state — at the time of writing the queue is empty, both users fully processed.
-  2. **Then flip the flag and redeploy:**
-     ```sh
-     aws ssm put-parameter --name /putyouon/prod/INGEST_WORKER_ENABLED \
-       --type String --value true --overwrite
-     ```
-     SSM is only read at deploy time (5.2), so a deploy has to follow or nothing changes.
-  3. **Then have a new user log in** and watch the worker claim their seeds. This is the
-     ML-ingest half of **10.3**'s smoke test, which has never been able to pass on this
-     instance — the last successful ingest was 2026-06-10, before the box existed.
-  4. Confirm the dispatch that comes out is sane, and that `/status` moves
-     `processing → ready` rather than sticking.
-  > **The ordering warning, spelled out.** If a new user logs in while the flag is still
-  > off, the in-process path runs, all ten downloads fail against the blocked IP, each seed
-  > burns `INGEST_MAX_ATTEMPTS` and goes terminal, and that user is stuck until someone runs
-  > the re-arm SQL in [runbook.md](../deploy/runbook.md). That SQL is a no-op today only
-  > because nobody has signed up since 10.5 shipped. **Flip the flag before the next
-  > signup, not after.**
-  > **Also expect the first run to be slower than it looks.** Roughly 70 s per track
-  > measured, so a full ten-seed snapshot is ~12 minutes. The user gets a dispatch as soon
-  > as the first seed lands (`get_recs` falls through on a partly-filled pool), but that
-  > dispatch is **locked for the day** against a thin pool. Accepted in 10.6; worth
-  > watching once with real eyes before deciding it is fine.
-
-- [ ] **11.5 Give the ingest worker a permanent home on the Mac mini.**
-  **How:** 11.4 gets the worker running somewhere; this makes it durable. Running it by
-  hand from a laptop is fine for proving the path and wrong as a permanent arrangement: a
-  laptop sleeps, and a sleeping worker is indistinguishable from a broken one. Move it to
-  the Mac mini that already runs `data_pipeline`:
-  1. Clone the repo (or reuse the existing checkout), build the venv from
-     [worker/worker_requirements.txt](../worker/worker_requirements.txt), and confirm a
-     JavaScript runtime is on PATH — `run.py` refuses to start without one.
-  2. Copy `INGEST_WORKER_TOKEN`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` into
-     `worker/.env`. These are the secrets that live outside AWS; there is still no
-     rotation story beyond re-seeding SSM and restarting.
-  3. Run it under **launchd**, not cron and not `nohup`: this is a long-lived process, so
-     it wants `KeepAlive` and `RunAtLoad` rather than a schedule. `data_pipeline`'s
-     `setup_cron.sh` is the wrong model here. Point `StandardOutPath` somewhere that gets
-     rotated.
-     > **Throttle the restart.** 10.7 makes the worker **exit non-zero** when the app
-     > refuses its output, which is deliberate — but a bare `KeepAlive` would then restart
-     > it into the same refusal forever. Use `ThrottleInterval` and check the log rather
-     > than assuming a running process means a working one.
-  4. Stop `caffeinate`-style workarounds from being load-bearing: set the mini to never
-     sleep, and verify the worker survives a reboot.
-  5. Decide whether the laptop stays as a second worker. It can — claims use
-     `FOR UPDATE SKIP LOCKED`, so two workers take disjoint batches safely — but two
-     machines holding the same secrets doubles that exposure for very little throughput.
-  **Why:** Until this lands, "new users can be onboarded" depends on a laptop being awake,
-  and the failure mode is silent: seeds accumulate unclaimed and `/status` says
-  `processing` indefinitely. Nothing alerts, so the only signal is the worker's own
-  `Claimed N seed(s)` log line (see the runbook's worker section).
-
-
-## Deferred / follow-up (explicitly out of this pass)
-
-- **`data_pipeline` deployment** — packaging and scheduling (cron/systemd/EventBridge) is a
-  separate effort once the web app is live.
-  - *Note (1.2 cleanup, 2026-07-17):* the old `data_pipeline/db/init_db.py` — a dormant,
-    stale, destructive (`DROP TABLE … CASCADE`) hand-written schema bootstrap and a second
-    schema authority — was **deleted** as part of 1.2. When the pipeline is deployed, any
-    fresh-DB setup it needs should run `alembic upgrade head`, keeping Alembic the single
-    authority. (Its orphaned helper `data_pipeline/db/initializer.py`, now used only by its
-    own unit test, can be removed too whenever the pipeline work resumes.)
-- **The in-process ingest path validates no embedding at all.** `/ingest/complete` checks
-  dimensions, finiteness and norm before storing (10.6), but `process_top_tracks` writes
-  `embedding` straight into `Song` with no equivalent check, so the flag-off path would store
-  a degenerate vector silently — and `Song.spotify_track_id` is unique, so one bad embedding
-  for a popular track becomes the query seed for every user who has it (10.6's "poisoned
-  seeds cross users"). Filed here rather than as a launch item because the trigger looks
-  unreachable in practice: measured 2026-09-25, the model returns a dense finite vector even
-  for digital silence, and audio too short to embed raises instead. The asymmetry is still
-  real, and the fix is to route both paths through `embedding_problem`.
-
-- **A user's top tracks never refresh once processed.** Found 2026-10-02: the snapshot
-  from 2026-06-10 was still being served four months later. Not a bug in the narrow sense —
-  since A6, "stale" means *empty or unfinished*, so a fully-processed snapshot is never
-  rebuilt and seeds are recycled instead. **Deliberately not fixed**, because Phase 11
-  retires `me/top/tracks` as the seed source; if a Spotify-derived source survives, it
-  needs a time-based refresh (e.g. re-fetch when `snapshot_at` is older than N days).
-
-- **The frontend's dispatch cache is not scoped to a user.** `song-rec-carousel.tsx` stores
-  the day's dispatch under the fixed key `pyo:recs` and replays it until midnight Pacific.
-  On a shared browser, a second user who logs in the same day is shown the first user's
-  recommendations. Harmless with two users and Spotify accounts; worth fixing before Phase
-  A, when email accounts make shared devices realistic. Key it by user id, and clear it on
-  logout.
-
-- **There is no account-deletion feature.** Deleting a user today means hand-written SQL,
-  in this order because none of the foreign keys cascade:
-  `user_recommendations` → `user_top_songs` → `users`, in one transaction. Seed `songs`
-  rows stay: they are shared reference data and some are pinned by `query_song_id`. A
-  deleted user's signed session cookie simply 401s, and Postgres never reuses the id. This
-  was planned as a drill on 2026-10-02 and not run. Phase A adds email accounts, which makes
-  "please delete my account" a realistic request; it should become a runbook procedure at
-  least, and probably an endpoint. A Spotify-linked user should also revoke the app from
-  their own Spotify account page.
-
-- **Zero-downtime deploys** — current plan accepts brief recreate downtime; blue/green is a
-  later upgrade.
-- **Model binary in git (audit H2)** — the 18 MB `.pb` committed twice
-  ([housekeeping-audit.md](housekeeping-audit.md) H2) bloats clones. Note the backend image
-  *must* ship its copy (`app/models/*.pb` is the runtime TF model), so the finding is repo
-  bloat only. LFS/history-purge is a deliberate, separate call.
-- **HA / autoscaling** — single instance now; an ALB + ASG (and moving TLS to ACM, plus
-  migrating DNS from Porkbun to a Route 53 alias record) is the scale-out path if you
-  outgrow one box.
-
-- **Cost-driven migration to a cheaper stack (planned, post-learning)** — the AWS-native
-  design here (RDS, ECR, IAM/OIDC, SSM secrets + SSM-deploy) carries an AWS-native price
-  (~$40–70/mo even right-sized to `t3.medium` — dominated by compute + RDS). This
-  deployment is on AWS **deliberately, to learn the ecosystem**; the intended follow-up is a move to a cheaper host — target
-  **Hetzner** (CX33, 8 GB, ~$7/mo) for compute + **Neon or Supabase** (managed Postgres
-  with pgvector) for the DB — for a ~$10–20/mo total.
-  - **Transfers cleanly:** the Docker images (repush to GHCR/Docker Hub), `docker-compose`,
-    the nginx config + Certbot TLS flow, the DB *data* (`pg_dump` RDS → `pg_restore` Neon,
-    then rebuild the HNSW index on the other side), the `.env` contract, and the Grafana
-    Cloud + Alloy observability stack (not AWS-native, so it just re-points).
-  - **Gets rebuilt (the AWS glue):** ECR → another registry; IAM roles + OIDC (0.4/0.5) →
-    SSH keys (no IAM); SSM Parameter Store (Phase 5) → env files / SOPS / Doppler; SSM Run
-    Command deploy (Phase 8) → SSH-based deploy (e.g. Kamal); security groups / Elastic IP
-    / SSM shell (Phase 6) → Hetzner firewall / floating IP / SSH; RDS backups + CloudWatch
-    alarms (9.2/9.3) → Neon PITR/branching. That's Phases 0.4, 0.5, 5, 6, 8 — a large share
-    of the plan's *effort*, but faster the second time (Hetzner's model is simpler), and it
-    *is* the transferable concepts the AWS pass teaches.
-  - **The one discipline that keeps the app portable:** never call the AWS SDK (`boto3`)
-    from `app/`. Secrets reach the app only as plain env vars materialized into `.env` files
-    at deploy time (5.2) — that `env_file` boundary is the portability seam. Keep all
-    AWS-specific logic in the *deploy scripts*, never in application code, and the app half
-    lifts-and-shifts with zero changes.
-  - **Interim AWS cost lever (no migration):** the real lever is **right-sizing the
-    instance**, not the model. A direct measurement (2026-07-14, `/usr/bin/time -l` on the
-    pipeline venv) put the Essentia/TF runtime + model at **~277 MB for one instance and
-    ~313 MB for both** — Essentia bundles a lightweight C++ TF backend, not Python
-    `tensorflow`. The two model instances are **required, not a bug**: ingest reads output
-    `PartitionedCall:1` (embeddings) and genre reads `PartitionedCall:0` off the same graph;
-    consolidating to a single load is the deferred, higher-risk **P1/P2** work
-    ([backend-optimization-deferred.md](../backend/agents/backend-optimization-deferred.md) —
-    embeddings drive kNN recs, no equivalence-test infra), and the second load costs only
-    ~36 MB anyway, so it is **not** a memory or cost lever. With a realistic full-host
-    footprint of ~1–2 GB under load, size 6.1 at **`t3.medium` (4 GB, ~$30/mo)** rather than
-    `t3.large`, add a 1-year Compute Savings Plan (~30–40% off), and you land near ~$20/mo
-    with no architecture change.
+Now in [deployment-deferred.md](../deployment-deferred.md).
 
 ---
 
@@ -2170,5 +1955,5 @@ is the last thing you wire because it automates a process you've already proven 
 11. HNSW index rebuilt — P5b launch gate (10.2)
 
 Everything else hardens or observes; the eleven above are what stand between you and a
-working production deploy. Phase 11 (email/Google login + search seeding) deliberately
-sits **after** cutover — it's the pipeline's first workstream, not a launch blocker.
+working production deploy. Phase 11 (email/Google login + search seeding, now
+[pyo-0.0.1-sign-in-change.md](../pyo-0.0.1-sign-in-change.md)) deliberately sits **after** cutover — it's the pipeline's first workstream, not a launch blocker.

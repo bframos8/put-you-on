@@ -77,7 +77,7 @@ stack); see [backend-optimization-deferred.md](backend-optimization-deferred.md)
 ## Housekeeping — Batch 1 (low-risk deletions), done 2026-06-12
 
 Commits `01335bd`, `5bcb92a`, `7768256`. Source audit:
-[../../claude-mds/housekeeping-audit.md](../../claude-mds/housekeeping-audit.md).
+[../../claude-mds/housekeeping-audit.md](../../claude-mds/completed/housekeeping-audit.md).
 
 | Item | What |
 |------|------|
@@ -91,7 +91,7 @@ Commits `01335bd`, `5bcb92a`, `7768256`. Source audit:
 
 ## Housekeeping — Batch 2 (mechanical refactors + L4), done 2026-06-15
 
-Source plan: [../../claude-mds/optimization-plan.md](../../claude-mds/optimization-plan.md).
+Source plan: [../../claude-mds/optimization-plan.md](../../claude-mds/completed/optimization-plan.md).
 
 | Item | What | Commit |
 |------|------|--------|

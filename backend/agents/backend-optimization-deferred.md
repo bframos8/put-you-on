@@ -127,7 +127,7 @@ with RED metrics, plus custom metrics — `embed_duration_seconds`,
 `spotify_api_errors_total`, `oauth_logins_total` — in
 [main.py](../app/main.py), [spotify_ingest_service.py](../app/services/spotify_ingest_service.py),
 and [auth.py](../app/api/v1/auth.py). Full plan:
-[../../claude-mds/observability-plan.md](../../claude-mds/observability-plan.md).
+[../../claude-mds/observability-plan.md](../../claude-mds/completed/observability-plan.md).
 
 **Why deferred (user decision):** net-new instrumentation tied to the broader
 Grafana-Cloud/deploy rollout; not part of the core optimization pass.

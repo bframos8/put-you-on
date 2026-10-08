@@ -102,12 +102,12 @@ next, then the database wiring, then dashboards on top of data that's already fl
 
 - [ ] **1.1 Add the instrumentation dependency.**
   **How:** Add `prometheus-fastapi-instrumentator` (pulls in `prometheus_client`) to
-  [backend/backend_requirements.txt](../backend/backend_requirements.txt), pinned.
+  [backend/backend_requirements.txt](../../backend/backend_requirements.txt), pinned.
   **Why:** It wires Prometheus-format RED metrics into FastAPI with a few lines and exposes a
   scrape endpoint — far less custom code than raw `prometheus_client` for the HTTP layer.
 
 - [ ] **1.2 Expose `/metrics` and the RED baseline.**
-  **How:** In [backend/app/main.py](../backend/app/main.py), after `app` is built:
+  **How:** In [backend/app/main.py](../../backend/app/main.py), after `app` is built:
   ```python
   from prometheus_fastapi_instrumentator import Instrumentator
   Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
@@ -129,7 +129,7 @@ next, then the database wiring, then dashboards on top of data that's already fl
   right call sites:
   - **ML embed/ingest duration** — a `Histogram("embed_duration_seconds", ...)` timed around
     the embed/ingest path in
-    [spotify_ingest_service.py](../backend/app/services/spotify_ingest_service.py) (`_embed` /
+    [spotify_ingest_service.py](../../backend/app/services/spotify_ingest_service.py) (`_embed` /
     `add_user_top_songs`).
   - **Spotify API latency + failures** — a `Histogram` + `Counter("spotify_api_errors_total",
     ["endpoint"])` around the `httpx` calls (the ones governed by `SPOTIFY_HTTP_TIMEOUT`).
@@ -219,7 +219,7 @@ next, then the database wiring, then dashboards on top of data that's already fl
   `DatabaseConnections`, `FreeableMemory`, `FreeStorageSpace`, `ReadLatency`/`WriteLatency`,
   `ReadIOPS`/`WriteIOPS`, and (if applicable) `ReplicaLag`/`BurstBalance`.
   **Why:** These five-ish are the ones that predict RDS trouble: connection exhaustion (the app
-  pools 10+20 per worker — see [database.py:18-24](../backend/app/db/database.py#L18-L24)),
+  pools 10+20 per worker — see [database.py:18-24](../../backend/app/db/database.py#L18-L24)),
   storage-full, and latency creep. Confirm they exist before building panels on them.
 
 ---
