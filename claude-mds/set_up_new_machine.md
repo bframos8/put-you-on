@@ -22,7 +22,7 @@ skip to [AWS / deployment work](#aws--deployment-work) if that is all you need.
 ## AWS / deployment work
 
 Enough to pick up **Phase 6** of the
-[deployment gameplan](deployment-gameplan.md). No fonts, no mkcert, no local Postgres,
+[deployment gameplan](completed/deployment-gameplan.md). No fonts, no mkcert, no local Postgres,
 no venvs, no Node — Phase 6 is instance provisioning, security groups, DNS, and RDS
 verification.
 

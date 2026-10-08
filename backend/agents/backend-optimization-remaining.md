@@ -3,7 +3,7 @@
 > **P5b is DONE (2026-09-25), so this queue is empty.** The index was rebuilt on a
 > temporarily scaled-up RDS in 2m37s (not the ~hour expected) and the query change
 > landed with it. Full write-up in
-> [deployment-gameplan.md](../../claude-mds/deployment-gameplan.md) 10.2. Two
+> [deployment-gameplan.md](../../claude-mds/completed/deployment-gameplan.md) 10.2. Two
 > corrections to what the runbook below predicted, kept here because they are the
 > transferable lessons:
 > - **The "Remaining steps" below are incomplete.** Moving the filter to `Song.genre`

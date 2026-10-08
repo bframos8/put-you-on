@@ -18,7 +18,7 @@ over a song corpus scraped from Bandcamp. Max 10 recommendations per user per da
 | [data_pipeline/](data_pipeline/) | Offline ingestion, not part of the web app. `link_pipeline/` crawls Bandcamp for album links; `song_pipeline/` downloads, embeds, and inserts songs. Driven by cron (`setup_cron.sh`). |
 | [deploy/](deploy/) | SSM Parameter Store seeding and env materialization for production. |
 | [nginx/](nginx/) | TLS-terminating reverse proxy config, dev and prod. |
-| [claude-mds/](claude-mds/) | Planning and decision docs. Start with [deployment-gameplan.md](claude-mds/deployment-gameplan.md) and [commands.md](claude-mds/commands.md). |
+| [claude-mds/](claude-mds/) | Planning and decision docs. Active plans sit at the top level; finished ones move to `completed/`. [commands.md](claude-mds/commands.md) is the runbook. |
 
 ## Running it
 
@@ -76,7 +76,7 @@ behaviour is surprising (see the Dockerfiles and `.dockerignore` files). Match t
 when touching those areas; do not strip existing explanatory comments.
 
 **Migrations.** Alembic is the single authority on schema. No `create_all`. See
-[claude-mds/phase-1-decisions.md](claude-mds/phase-1-decisions.md).
+[claude-mds/phase-1-decisions.md](claude-mds/completed/phase-1-decisions.md).
 
 **Commits.** Do not add AI-attribution trailers or `Co-Authored-By` lines.
 
@@ -87,4 +87,4 @@ when touching those areas; do not strip existing explanatory comments.
 The Spotify app is quota-limited to roughly 25 OAuth users, so anything requiring
 broad `user-top-read` access is off the table; prefer Client Credentials plus
 user-provided data. Background at
-[claude-mds/spotify-ingest-without-quota-plan.md](claude-mds/spotify-ingest-without-quota-plan.md).
+[claude-mds/completed/spotify-ingest-without-quota-plan.md](claude-mds/completed/spotify-ingest-without-quota-plan.md).

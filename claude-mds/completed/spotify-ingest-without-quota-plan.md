@@ -1,10 +1,16 @@
 # Spotify Ingest Without Quota Extension — Findings & Implementation Plan
 
+> **Superseded 2026-10-02 by [pyo-0.0.1-sign-in-change.md](../pyo-0.0.1-sign-in-change.md).**
+> Its decisions and steps were merged there and re-verified against the code and
+> Spotify's 2026 developer-mode changes, which removed batch track lookup and
+> non-owned playlist reads (so Phase C below is dropped). Kept for the options analysis
+> and the original reasoning. Line references below are from July and are stale.
+
 **Date:** 2026-07-14 (identity model 2026-07-17; refined into ordered steps 2026-07-17)
 **Branch:** `Backend-optimization`
 **Status:** Plan finalized + agent-verified against the code (2026-07-17). **Sequenced
 post-deploy:** the app launches as-is with Spotify OAuth, then this plan runs as
-[deployment-gameplan **Phase 11**](deployment-gameplan.md) — the first workstream through
+[**Put You On 0.0.1**](../pyo-0.0.1-sign-in-change.md) (formerly deployment-gameplan **Phase 11**) — the first workstream through
 the live CI/CD pipeline. One step = one PR (plan + verify + implement + `pytest`), merged
 through CI and auto-deployed.
 
@@ -59,13 +65,13 @@ capped call with catalog endpoints the user drives manually.
 
 ## Codebase findings (verified against code 2026-07-17)
 
-The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotify_auth_service.py#L57) (`/me/top/tracks`)
-→ [`add_user_top_songs`](../backend/app/services/spotify_ingest_service.py#L114) → background
-[`process_top_tracks`](../backend/app/services/spotify_ingest_service.py#L140) →
-[`query_recommendations`](../backend/app/services/spotify_ingest_service.py#L266).
+The current flow is: OAuth → [`get_top_tracks`](../../backend/app/services/spotify_auth_service.py#L57) (`/me/top/tracks`)
+→ [`add_user_top_songs`](../../backend/app/services/spotify_ingest_service.py#L114) → background
+[`process_top_tracks`](../../backend/app/services/spotify_ingest_service.py#L140) →
+[`query_recommendations`](../../backend/app/services/spotify_ingest_service.py#L266).
 
 1. **The download/embed path already uses Client Credentials.**
-   [`_download`](../backend/app/services/spotify_ingest_service.py#L46) passes
+   [`_download`](../../backend/app/services/spotify_ingest_service.py#L46) passes
    `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET` to spotdl. The genre-classify → embed →
    recommend machinery was **never** the capped part.
 
@@ -74,30 +80,30 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
    `external_urls.spotify`, `duration_ms`). No reshaping needed.
 
 3. **Dedup across users already exists.** Seeds link to catalog rows by
-   `Song.spotify_track_id` (unique). [`process_top_tracks`](../backend/app/services/spotify_ingest_service.py#L163)
+   `Song.spotify_track_id` (unique). [`process_top_tracks`](../../backend/app/services/spotify_ingest_service.py#L163)
    has a fast path: an existing `Song` with a genre is reused — **no download, no
    re-embed**. A track any user ever ingested is free for every later user. (Bandcamp
    catalog rows have `spotify_track_id = NULL`, so they neither collide nor match.)
 
 4. **The session stack is already auth-agnostic.**
-   [`create_session`](../backend/app/core/session.py#L19) signs the DB `user.id`;
-   [`get_current_user`](../backend/app/core/dependencies.py#L7) looks up by id. Both stay
+   [`create_session`](../../backend/app/core/session.py#L19) signs the DB `user.id`;
+   [`get_current_user`](../../backend/app/core/dependencies.py#L7) looks up by id. Both stay
    untouched; every login path ends with `create_session(user.id)` + the same cookie
-   flags as [`spotify_callback`](../backend/app/api/v1/auth.py#L64).
+   flags as [`spotify_callback`](../../backend/app/api/v1/auth.py#L64).
 
 5. **Two Spotify couplings the earlier draft missed — both live in `get_recs`:**
-   - [`songs.py:67`](../backend/app/api/v1/songs.py#L67) calls
-     [`refresh_tokens`](../backend/app/services/spotify_auth_service.py#L104) on every
+   - [`songs.py:67`](../../backend/app/api/v1/songs.py#L67) calls
+     [`refresh_tokens`](../../backend/app/services/spotify_auth_service.py#L104) on every
      request; its first line compares `user.token_expires_at > datetime.now()`, which
      **raises `TypeError` when the user has no Spotify tokens** (`None > datetime`).
-   - The stale branch ([`songs.py:84-94`](../backend/app/api/v1/songs.py#L84)) fetches
+   - The stale branch ([`songs.py:84-94`](../../backend/app/api/v1/songs.py#L84)) fetches
      `/me/top/tracks` directly. Both must go (step A6).
 
-6. **`add_user_top_songs` wipes the whole seed set** ([`:115`](../backend/app/services/spotify_ingest_service.py#L115)
+6. **`add_user_top_songs` wipes the whole seed set** ([`:115`](../../backend/app/services/spotify_ingest_service.py#L115)
    `delete()`) on every call — snapshot semantics that contradict the additive decision
    (step B3 changes this).
 
-7. **`RecsResponse.status` is a free string** ([`schemas/song.py:8`](../backend/app/schemas/song.py#L8)),
+7. **`RecsResponse.status` is a free string** ([`schemas/song.py:8`](../../backend/app/schemas/song.py#L8)),
    so the new `needs_seeds` status needs no schema migration.
 
 ---
@@ -117,10 +123,10 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
   - Add `google_id TEXT UNIQUE NULL` (Google's stable `sub` claim).
   - Add `password_hash TEXT NULL`.
   - Add `auth_provider` enum `email|google|spotify` — mirror the
-    [`WorkStatus`](../backend/app/db/models.py#L11) pattern
+    [`WorkStatus`](../../backend/app/db/models.py#L11) pattern
     (`Enum(..., name="auth_provider_enum", create_type=False)`, type created in the
     migration) — with **`server_default='spotify'`** (covers the backfill *and* keeps
-    [`upsert_user`](../backend/app/services/spotify_auth_service.py#L88), which doesn't
+    [`upsert_user`](../../backend/app/services/spotify_auth_service.py#L88), which doesn't
     set the column, working during the A1→A6 window).
   - Add `email_verified BOOLEAN NOT NULL DEFAULT false` (forward-compat for Phase D).
   - **Normalize emails to lowercase**: backfill `lower(email)` (assert no case-only
@@ -128,8 +134,8 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
     constraint then enforces case-insensitive uniqueness de facto.
   - `email NOT NULL` is **deferred to A6's companion migration**: until Spotify signup
     is retired, `upsert_user` can still insert `email=None`
-    ([`:91`](../backend/app/services/spotify_auth_service.py#L91)) and would violate it.
-  **Why:** Today [`User.spotify_id`](../backend/app/db/models.py#L22) is `NOT NULL` — a
+    ([`:91`](../../backend/app/services/spotify_auth_service.py#L91)) and would violate it.
+  **Why:** Today [`User.spotify_id`](../../backend/app/db/models.py#L22) is `NOT NULL` — a
   row literally cannot exist without Spotify. Everything else in A/B builds on this row
   shape.
   **Coordination:** deployment-gameplan 1.2 re-roots the chain **pre-deploy**, so this
@@ -142,12 +148,12 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
 
 - [ ] **A2. Password hashing module.** *(S)*
   **How:** Add `argon2-cffi` to
-  [`backend_requirements.txt`](../backend/backend_requirements.txt) (pinned). New
+  [`backend_requirements.txt`](../../backend/backend_requirements.txt) (pinned). New
   `app/core/passwords.py`: `hash_password` / `verify_password` wrapping argon2id
   defaults. Policy enforced at the schema layer: 8–128 chars, no composition rules.
   Passwords never logged, never stored raw.
   **Why:** One-way KDF is the standard for credentials;
-  [`EncryptedString`](../backend/app/db/types.py) is reversible by design (for API
+  [`EncryptedString`](../../backend/app/db/types.py) is reversible by design (for API
   tokens) and must not be used here.
 
 - [ ] **A3. One-path resolver (the crux).** *(S)*
@@ -167,7 +173,7 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
   standard for consumer apps.
 
 - [ ] **A4. Email/password endpoints.** *(M)*
-  **How:** In [`auth.py`](../backend/app/api/v1/auth.py):
+  **How:** In [`auth.py`](../../backend/app/api/v1/auth.py):
   - `POST /auth/register` `{email, password}` → validate + normalize, one-path check
     (existing email-provider row → "already exists, sign in instead"), `hash_password`,
     insert `auth_provider='email'`, `email_verified=false`, `display_name=NULL` (A7
@@ -181,22 +187,22 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
     deployment-gameplan 1.4/4.2 land `--proxy-headers` + forwarded headers).
   - Housekeeping in this step: extract a `set_session_cookie(response, user_id)` helper
     (A4 + A5 would otherwise be cookie-flag copies 3 and 4 of
-    [`auth.py:65-72`](../backend/app/api/v1/auth.py#L65)); replace the dead
-    Spotify-shaped [`schemas/user.py`](../backend/app/schemas/user.py) (imported
+    [`auth.py:65-72`](../../backend/app/api/v1/auth.py#L65)); replace the dead
+    Spotify-shaped [`schemas/user.py`](../../backend/app/schemas/user.py) (imported
     nowhere) with the register/login schemas; pin **`email-validator`** in requirements
     (`EmailStr` needs it and it isn't installed today).
-  **Why:** Mirrors the existing cookie contract exactly — [`/me`](../backend/app/api/v1/auth.py#L76),
+  **Why:** Mirrors the existing cookie contract exactly — [`/me`](../../backend/app/api/v1/auth.py#L76),
   `logout`, and every authed route work unchanged.
 
 - [ ] **A5. Google OAuth login.** *(M)*
   **How:** New `GoogleAuthService` mirroring
-  [`SpotifyAuthService`](../backend/app/services/spotify_auth_service.py) (hand-rolled
+  [`SpotifyAuthService`](../../backend/app/services/spotify_auth_service.py) (hand-rolled
   `httpx`, no new OAuth lib): auth `https://accounts.google.com/o/oauth2/v2/auth`
   (scopes `openid email profile`), token `https://oauth2.googleapis.com/token`, profile
   `https://openidconnect.googleapis.com/v1/userinfo` (`sub`, `email`, `email_verified`,
   `name`, `picture`). Routes in `auth.py`:
   - `GET /auth/google/login` → redirect with CSRF `state`, reusing the existing
-    [`oauth_states`](../backend/app/api/v1/auth.py#L24) sweep + TTL verbatim.
+    [`oauth_states`](../../backend/app/api/v1/auth.py#L24) sweep + TTL verbatim.
   - `GET /auth/google/callback` → validate state, exchange code, fetch userinfo,
     **require Google's `email_verified=true`** (else redirect with an error), then:
     lookup by `google_id` first (stable even if the Google email changes; never
@@ -209,7 +215,7 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
     (`auth_provider='google'`, `google_id=sub`, `display_name=name`,
     `email_verified=true`). Set cookie, redirect to the dashboard.
   - Config: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` in
-    [`.env.example`](../backend/.env.example) + `.env-backend`. One-time Google Cloud
+    [`.env.example`](../../backend/.env.example) + `.env-backend`. One-time Google Cloud
     Console setup: OAuth web client + consent screen + both redirect URIs
     (`http://localhost:8000/api/v1/auth/google/callback`,
     `https://putyouon.app/api/v1/auth/google/callback`). No Spotify-style hard cap;
@@ -222,12 +228,12 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
   blast radius is large)*
   **How:** Remove the `/auth/spotify/login` + `/auth/spotify/callback` routes, and
   **delete the dead Next.js route
-  [`frontend/src/app/api/auth/spotify/route.ts`](../frontend/src/app/api/auth/spotify/route.ts)**
+  [`frontend/src/app/api/auth/spotify/route.ts`](../../frontend/src/app/api/auth/spotify/route.ts)**
   — it exchanges auth codes with `SPOTIFY_CLIENT_SECRET` in the *frontend* env and
   returns raw tokens to the browser; unused, and a standing leak risk. Service + token
   columns stay dormant for a future "connect". In
-  [`get_recs`](../backend/app/api/v1/songs.py#L58): drop the
-  [`refresh_tokens`](../backend/app/api/v1/songs.py#L67) call (crashes on
+  [`get_recs`](../../backend/app/api/v1/songs.py#L58): drop the
+  [`refresh_tokens`](../../backend/app/api/v1/songs.py#L67) call (crashes on
   `token_expires_at=None` — finding 5) and replace the stale branch's top-tracks fetch
   with `needs_seeds` — but **only when the user has zero *processed* seeds**. With ≥1
   processed seed, proceed to `query_recommendations` even if some picks are still
@@ -245,12 +251,12 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
 - [ ] **A7. Frontend: auth pages.** *(M)*
   **How:** Login/register page (email + password form with mode toggle, "Continue with
   Google" button pointed at `/api/v1/auth/google/login` — mirror
-  [`spotify-login-button.tsx`](../frontend/src/components/spotify-login-button.tsx)).
+  [`spotify-login-button.tsx`](../../frontend/src/components/spotify-login-button.tsx)).
   Replace **all three** Spotify entry points: the button component at
-  [`page.tsx:83`](../frontend/src/app/page.tsx#L83), the raw CTA anchor at
-  [`page.tsx:184`](../frontend/src/app/page.tsx#L184), and the raw link at
-  [`navbar-component-01.tsx:73`](../frontend/src/components/shadcn-studio/blocks/navbar-component-01/navbar-component-01.tsx#L73).
-  Update [`callback/page.tsx`](../frontend/src/app/callback/page.tsx) copy ("Signing
+  [`page.tsx:83`](../../frontend/src/app/page.tsx#L83), the raw CTA anchor at
+  [`page.tsx:184`](../../frontend/src/app/page.tsx#L184), and the raw link at
+  [`navbar-component-01.tsx:73`](../../frontend/src/components/shadcn-studio/blocks/navbar-component-01/navbar-component-01.tsx#L73).
+  Update [`callback/page.tsx`](../../frontend/src/app/callback/page.tsx) copy ("Signing
   you in with Spotify" — the Google redirect reuses this page). Give the dashboard a
   **minimal `needs_seeds` state now** — today the carousel would show "You're all
   caught up" to a seedless user, which is actively wrong; B5 replaces it with the real
@@ -274,10 +280,10 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
 - [ ] **B1. Client Credentials token manager.** *(S)*
   **How:** `get_app_token()` on `SpotifyAuthService`: POST `SPOTIFY_TOKEN_URL` with
   `grant_type=client_credentials` using the existing
-  [`_auth_header`](../backend/app/services/spotify_auth_service.py#L27); cache token +
+  [`_auth_header`](../../backend/app/services/spotify_auth_service.py#L27); cache token +
   expiry (+ an `asyncio.Lock`) at **module level in `spotify_auth_service.py`** — two
-  module-level service instances exist ([`auth.py:15`](../backend/app/api/v1/auth.py#L15),
-  [`songs.py:14`](../backend/app/api/v1/songs.py#L14)), so an instance attribute would
+  module-level service instances exist ([`auth.py:15`](../../backend/app/api/v1/auth.py#L15),
+  [`songs.py:14`](../../backend/app/api/v1/songs.py#L14)), so an instance attribute would
   mint two tokens, and `app.state` isn't reachable from a service method without
   plumbing `Request` through. Refresh ~60s before the 1h expiry.
   **Why:** App-level, uncapped; one token serves search, hydration, and playlists.
@@ -286,13 +292,13 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
   **How:** `GET /items/search?q=` → validate `q` (1–100 chars), proxy
   `GET /v1/search?type=track&limit=10` with the app token, return a slim schema
   (`id`, `name`, `artist`, `album`, `image_url`, `duration_ms`). Rate-limit
-  `20/minute` with [`session_key`](../backend/app/core/limiter.py) (authed users).
+  `20/minute` with [`session_key`](../../backend/app/core/limiter.py) (authed users).
   **Why:** Thin proxy keeps the client secret server-side and the response shape ours.
 
 - [ ] **B3. Save-picks endpoint + additive seed semantics.** *(M)*
   **How:** `POST /items/picks` `{track_ids: [1–25 ids]}`:
   1. **Guard first:** `user.id in processing_users` → return `{"status": "processing"}`
-     (the same guard [`get_recs`](../backend/app/api/v1/songs.py#L70) uses). Without it
+     (the same guard [`get_recs`](../../backend/app/api/v1/songs.py#L70) uses). Without it
      a double POST runs two concurrent pipelines: duplicate downloads,
      unique-violation races on `Song.spotify_track_id`, and two dispatch batches today
      (the `with_for_update` lock protects only the API path, not the background
@@ -300,14 +306,14 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
   2. Hydrate server-side via `GET /v1/tracks?ids=` (never trust client metadata).
      Harden: drop `null` entries (bogus ids return null) and tolerate empty
      `album.images` (the current `images[0]` pattern IndexErrors on artless albums).
-  3. Rework [`add_user_top_songs`](../backend/app/services/spotify_ingest_service.py#L114)
+  3. Rework [`add_user_top_songs`](../../backend/app/services/spotify_ingest_service.py#L114)
      to **additive**: drop the `delete()`; skip ids already in the user's seed set;
      enforce the **25 active seed cap** (reject with a clear message if the request
      would exceed it; frontend shows remaining slots); **keep the insert-time linking
      of existing `Song` rows** (`song_id`/`genre` at
-     [`:118-135`](../backend/app/services/spotify_ingest_service.py#L118)).
+     [`:118-135`](../../backend/app/services/spotify_ingest_service.py#L118)).
   4. Then exactly what the old stale branch did: `processing_users.add`, background
-     [`_run_process_top_tracks`](../backend/app/api/v1/songs.py#L17) with
+     [`_run_process_top_tracks`](../../backend/app/api/v1/songs.py#L17) with
      `on_first_success=query_recommendations`, return `{"status": "processing"}` — the
      existing `/status` poll and dashboard flow take over unchanged.
   **Why:** Dedup (finding 3) makes repeat picks free; hydration-by-id closes the forged
@@ -324,10 +330,10 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
   re-picks). Two guards:
   - return `409` while `user.id in processing_users` — deleting a row the background
     run holds aborts its **unguarded fast-path commit**
-    ([`spotify_ingest_service.py:167-171`](../backend/app/services/spotify_ingest_service.py#L167))
+    ([`spotify_ingest_service.py:167-171`](../../backend/app/services/spotify_ingest_service.py#L167))
     with `StaleDataError`, killing the rest of the run;
   - add `"DELETE"` to `CORSMiddleware.allow_methods` in
-    [`main.py:88`](../backend/app/main.py#L88) (currently `GET/POST/OPTIONS` — the
+    [`main.py:88`](../../backend/app/main.py#L88) (currently `GET/POST/OPTIONS` — the
     browser preflight would refuse the call outright).
   **Why:** Additive + a hard cap of 25 without removal is a dead end at the cap. Smallest
   possible unblock.
@@ -335,12 +341,12 @@ The current flow is: OAuth → [`get_top_tracks`](../backend/app/services/spotif
 - [ ] **B5. Frontend: picker + seed list.** *(M)*
   **How:** Dashboard picker (search box → results → add), shown prominently when
   `/song_recs/` returns `needs_seeds`; seed list from the existing
-  [`/items/top_tracks/`](../backend/app/api/v1/songs.py#L100) endpoint (UI copy says
+  [`/items/top_tracks/`](../../backend/app/api/v1/songs.py#L100) endpoint (UI copy says
   "your seeds"; raise its `limit(10)` to the cap) with remove buttons; keep the
   status-poll → carousel flow as is. Sweep the leftover top-tracks copy:
-  [`song-rec-carousel.tsx`](../frontend/src/components/song-rec-carousel.tsx) ("your
+  [`song-rec-carousel.tsx`](../../frontend/src/components/song-rec-carousel.tsx) ("your
   top tracks") and
-  [`profile-content.tsx`](../frontend/src/components/profile-content.tsx) ("Play a few
+  [`profile-content.tsx`](../../frontend/src/components/profile-content.tsx) ("Play a few
   songs on Spotify and this fills itself in").
   **Why:** This is the new onboarding moment — a user must get from empty account to
   first dispatch in one sitting.
