@@ -202,7 +202,17 @@ before any new kind of account.
   it's shadowed, but it is a standing leak if either of those ever changes.
   **Why:** Zero-risk, and it should not wait for the rest.
 
-- [ ] **A1. Migration: multi-provider `users`, unique seeds.** *(M)*
+- [x] **A1. Migration: multi-provider `users`, unique seeds.** *(M)*
+  > **Done 2026-10-09 (PR #33), migration `e5f6a7b8c9d0`.** Decided in review: a Postgres
+  > enum, a unique index on `lower(email)` (keeping `users_email_key`), the seed constraint
+  > here rather than in Phase B, and a downgrade that refuses while users without a
+  > Spotify id exist. Added after review: `SET LOCAL lock_timeout = '5s'`, so the deploy
+  > fails fast instead of queueing requests behind a lock `get_recs` can hold for up to
+  > 10 seconds. Verified on a scratch Postgres 16 + pgvector 0.8.1 with Alembic run from
+  > the branch image: upgrade with seeded rows, `alembic check` clean (and it does report
+  > the `lower(email)` index when it's missing), every constraint, conflicting data
+  > failing with nothing changed, the lock timeout firing, downgrade to an identical
+  > schema, the downgrade refusal, and ORM inserts in both the old and new shapes.
   **How:** One hand-written migration, `down_revision = 'd4e5f6a7b8c9'` (the current
   head; the July plan's `45f91add221e` is two revisions old).
   - `users.spotify_id` becomes nullable. It stays unique (Postgres allows many NULLs).

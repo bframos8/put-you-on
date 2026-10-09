@@ -388,3 +388,41 @@ class TestLogout:
         set_cookie = resp.headers.get("set-cookie", "").lower()
         assert "session" in set_cookie
         assert "max-age=0" in set_cookie
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SpotifyAuthService.upsert_user
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestUpsertUserEmail:
+    """A new Spotify user is stored with a lowercase email (0.0.1 A1).
+
+    Email is the identity key from 0.0.1 on, and the database refuses case variants
+    through a unique index on lower(email). Until the Spotify login is retired it is
+    still a way in, so a mixed-case address from Spotify must not be stored as written.
+    Called directly because the callback tests above mock upsert_user out entirely.
+    """
+
+    @staticmethod
+    def _db_without_existing_user():
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        return db
+
+    @pytest.mark.asyncio
+    async def test_new_user_email_is_lowercased(self):
+        from app.services.spotify_auth_service import SpotifyAuthService
+
+        db = self._db_without_existing_user()
+        await SpotifyAuthService().upsert_user(
+            db, _mock_token_data, {"id": "sp_case", "email": "Foo@Example.COM"}
+        )
+        assert db.add.call_args.args[0].email == "foo@example.com"
+
+    @pytest.mark.asyncio
+    async def test_new_user_without_email_stays_none(self):
+        from app.services.spotify_auth_service import SpotifyAuthService
+
+        db = self._db_without_existing_user()
+        await SpotifyAuthService().upsert_user(db, _mock_token_data, {"id": "sp_noemail"})
+        assert db.add.call_args.args[0].email is None
