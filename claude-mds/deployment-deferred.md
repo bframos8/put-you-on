@@ -26,6 +26,17 @@ refer to the gameplan; Phase 11 items now live in
   for digital silence, and audio too short to embed raises instead. The asymmetry is still
   real, and the fix is to route both paths through `embedding_problem`.
 
+- **`alembic check` against production always reports the HNSW index.** Found 2026-10-09,
+  checking 0.0.1 A1 after it deployed. `songs_embedding_hnsw_idx` was built out of band in
+  deployment-gameplan 10.2 (2026-09-25), the day after 10.1 recorded a clean check, and the
+  models deliberately don't declare it. So every `alembic check` against production now
+  proposes `remove_index` for it, on top of the two known constraint-name differences
+  (`albums_url_key`, `songs_album_id_title_key`). Harmless while nobody autogenerates
+  against production, which that name drift already rules out, but it is noise that a real
+  drift could hide in. Fix: an `include_object` hook in `backend/alembic/env.py` that skips
+  that index by name. The same hook could ignore the two name-only differences, or a small
+  migration could rename them.
+
 - **Moved into [Put You On 0.0.1](pyo-0.0.1-sign-in-change.md) on 2026-10-02:**
   - *A user's top tracks never refresh once processed.* Resolved by 0.0.1 retiring
     `me/top/tracks` as the seed source (Phase D); seeds become songs people pick.
