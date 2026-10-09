@@ -85,10 +85,14 @@ class SpotifyAuthService:
             user.token_expires_at = expires_at
             user.updated_at = datetime.now()
         else:
+            # Lowercased because email is the identity key from 0.0.1 on and the database
+            # refuses case variants (uq_users_email_lower). Spotify can return mixed case,
+            # and until the Spotify login is retired this is still a way in.
+            email = profile.get("email")
             user = User(
                 spotify_id=spotify_id,
                 display_name=profile.get("display_name"),
-                email=profile.get("email"),
+                email=email.lower() if email else None,
                 spotify_access_token=token_data["access_token"],
                 spotify_refresh_token=token_data["refresh_token"],
                 token_expires_at=expires_at,

@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Enum, ForeignKey, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Enum, ForeignKey, Index, Integer, Text, UniqueConstraint, false, func
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
@@ -15,18 +15,54 @@ class WorkStatus(enum.Enum):
     failed = "failed"
 
 
+class AuthProvider(enum.Enum):
+    email = "email"
+    google = "google"
+    spotify = "spotify"
+
+
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    spotify_id = Column(Text, unique=True, nullable=False)
+    # Nullable since 0.0.1 (migration e5f6a7b8c9d0): email and Google accounts have none.
+    spotify_id = Column(Text, unique=True)
     display_name = Column(Text)
+    # Always stored lowercase. Email is the identity key from 0.0.1 on, and
+    # uq_users_email_lower below makes the database refuse case variants.
     email = Column(Text, unique=True)
     spotify_access_token = Column(EncryptedString)
     spotify_refresh_token = Column(EncryptedString)
     token_expires_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    # Google's stable `sub` claim, not the email: it survives the person changing their
+    # Google address.
+    google_id = Column(Text)
+    # argon2id hash, never the password and never EncryptedString (which is reversible).
+    password_hash = Column(Text)
+    # Which sign-in path owns the account. Server defaults only, no ORM defaults, and
+    # both mirror the migration: 'spotify' covers the existing rows and keeps
+    # upsert_user (which never sets it) working until the Spotify login is retired. New
+    # code sets it explicitly. env.py doesn't set compare_server_default, so the two
+    # would drift silently if one changed without the other.
+    auth_provider = Column(
+        Enum(AuthProvider, name="auth_provider_enum", create_type=False),
+        nullable=False,
+        server_default=AuthProvider.spotify.value,
+    )
+    # Ships now, gates nothing yet; email confirmation is a later release.
+    email_verified = Column(Boolean, nullable=False, server_default=false())
+
+    # Named, so a later migration never has to guess an auto-generated name. The
+    # expression index is compared properly by `alembic check` under SQLAlchemy 2 (Alembic
+    # skips expression indexes only when running on SQLAlchemy 1.x), so it is declared here
+    # rather than living only in the migration.
+    __table_args__ = (
+        UniqueConstraint("google_id", name="uq_users_google_id"),
+        Index("uq_users_email_lower", func.lower(email), unique=True),
+    )
 
     top_songs = relationship("UserTopSong", back_populates="user")
     recommendations = relationship("UserRecommendation", back_populates="user")
@@ -94,6 +130,12 @@ class Song(Base):
 
 class UserTopSong(Base):
     __tablename__ = "user_top_songs"
+    # One row per (user, track). Spotify's top tracks never repeat, but 0.0.1's picks can
+    # (a double click, two tabs), and a duplicate seed would also count twice against the
+    # 25-seed cap that 0.0.1 Phase B adds.
+    __table_args__ = (
+        UniqueConstraint("user_id", "spotify_track_id", name="uq_user_top_songs_user_track"),
+    )
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
