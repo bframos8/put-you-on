@@ -80,9 +80,9 @@ when touching those areas; do not strip existing explanatory comments.
 
 **Commits.** Do not add AI-attribution trailers or `Co-Authored-By` lines.
 
-**Verification.** Do not spawn agents to double-check work without asking first. The
-plan-verification and review steps of the feature workflow below are the standing
-exception.
+**Agents.** Ask before running any agent, including in the feature workflow below. Say
+what the agent would check or answer. The user may answer it directly, which makes the
+agent unnecessary, or confirm that the agent should run.
 
 ## Branches and the feature workflow
 
@@ -103,12 +103,13 @@ through these steps in order:
    recommended. Wait for the answers.
 3. **Write the plan and a test plan.** The test plan says what proves the change works:
    tests to add or change, and any local, CI or production check.
-4. **Verify with an agent.** It checks every assumption in the plan that isn't certain,
-   and checks the test cases themselves: that they test the intended behaviour and would
-   fail without the change.
+4. **Verify assumptions and test cases.** List every assumption in the plan that isn't
+   certain, and what needs checking about the test cases (that they test the intended
+   behaviour and would fail without the change). Ask before running an agent on them;
+   the user may answer some or all directly.
 5. **Get approval on the plan**, then implement and run the test plan.
-6. **Review with agents** on the finished diff (correctness, simplicity, project
-   conventions). Bring the findings back before opening the PR.
+6. **Review the finished diff** for correctness, simplicity and project conventions.
+   Ask before running review agents. Bring the findings back before opening the PR.
 7. **Open the PR.** Once checks pass, merge with a merge commit
    (`gh pr merge --merge`, never squash) and confirm the deploy succeeded.
 
