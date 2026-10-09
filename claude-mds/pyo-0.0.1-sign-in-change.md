@@ -244,7 +244,17 @@ before any new kind of account.
   **Why:** Today a user row cannot exist without a Spotify id. Everything else builds on
   this.
 
-- [ ] **A2. Password hashing.** *(S)*
+- [x] **A2. Password hashing.** *(S)*
+  > **Done 2026-10-09 (PR #35).** Decided in review, replacing the How below where they
+  > differ: **OWASP's minimum recommended argon2id configuration** (19 MiB, 2 passes,
+  > 1 lane), not the library's 64 MiB default, for memory on the 2 GB box; no cap on
+  > concurrent hashes, so anyio's 40-thread pool is the ceiling (about 760 MiB); every
+  > password **NFKC-normalized** before hashing and checking; `verify_password` fails
+  > closed (False, logged at ERROR, never the hash) on a missing or unreadable stored
+  > hash; the 8-128 policy is counted as submitted; the dummy-hash timing helper is A5's.
+  > Verified: the full suite inside an image built from the branch; `EmailStr` raising
+  > `ImportError` in the pre-A2 image and working after; one verify at ~32 ms on a Mac;
+  > and each new test failing when its fix is undone.
   **How:** Pin `argon2-cffi==25.1.0` and `email-validator==2.3.0` in
   `backend/backend_requirements.txt`. `email-validator` is installed in the local venv
   but not in the image, so `EmailStr` would pass tests locally and fail in production;

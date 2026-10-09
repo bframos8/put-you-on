@@ -1,5 +1,7 @@
 alembic==1.18.4
+argon2-cffi==25.1.0
 cryptography==49.0.0
+email-validator==2.3.0
 essentia-tensorflow==2.1b6.dev1389
 fastapi==0.103.2
 httpx==0.28.1
