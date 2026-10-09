@@ -80,7 +80,37 @@ when touching those areas; do not strip existing explanatory comments.
 
 **Commits.** Do not add AI-attribution trailers or `Co-Authored-By` lines.
 
-**Verification.** Do not spawn agents to double-check work without asking first.
+**Verification.** Do not spawn agents to double-check work without asking first. The
+plan-verification and review steps of the feature workflow below are the standing
+exception.
+
+## Branches and the feature workflow
+
+**Branch names.** `<type>/v<version>/<short-description>`, lowercase with hyphens.
+`<type>` says what kind of change it is: `feature`, `bugfix`, `hotfix`, `refactor`,
+`design`, `test` or `docs` (add another only when a change fits none of these).
+`<version>` is the product version the change ships in. Example:
+`refactor/v0.0.1/delete-nextjs-spotify-route`. Branch from an up-to-date `main`, one
+change per branch and per PR.
+
+**Feature workflow.** Every change in a release plan (currently
+[claude-mds/pyo-0.0.1-sign-in-change.md](claude-mds/pyo-0.0.1-sign-in-change.md)) goes
+through these steps in order:
+
+1. **Understand the problem.** Read the code the change touches and check that what the
+   plan says about it is still true. Summarize what you found.
+2. **Ask clarifying questions** as plain options. Do not mark any option as
+   recommended. Wait for the answers.
+3. **Write the plan and a test plan.** The test plan says what proves the change works:
+   tests to add or change, and any local, CI or production check.
+4. **Verify with an agent.** It checks every assumption in the plan that isn't certain,
+   and checks the test cases themselves: that they test the intended behaviour and would
+   fail without the change.
+5. **Get approval on the plan**, then implement and run the test plan.
+6. **Review with agents** on the finished diff (correctness, simplicity, project
+   conventions). Bring the findings back before opening the PR.
+7. **Open the PR.** Once checks pass, merge with a merge commit
+   (`gh pr merge --merge`, never squash) and confirm the deploy succeeded.
 
 ## Constraints worth knowing
 
