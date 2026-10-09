@@ -6,9 +6,10 @@ their recommendations by **searching for songs and picking them**, instead of re
 their Spotify top tracks. That removes the Spotify developer-mode user cap, which is the
 only thing stopping new signups today.
 
-**Status:** planned. Re-verified against the code and against Spotify's and Google's
+**Status:** in progress. Re-verified against the code and against Spotify's and Google's
 current docs on 2026-10-02, with two verification agents (one on the codebase, one on the
-external APIs). Nothing below has been built yet.
+external APIs). The checkboxes below track what has landed; each ticked item carries a
+dated note.
 
 **Where this came from.** This file merges two earlier documents:
 - [spotify-ingest-without-quota-plan.md](completed/spotify-ingest-without-quota-plan.md)
@@ -190,7 +191,11 @@ before any new kind of account.
 
 ## Phase A — Identity backend (no visible change)
 
-- [ ] **A0. Delete the dead Next.js Spotify token route.** *(S)*
+- [x] **A0. Delete the dead Next.js Spotify token route.** *(S)*
+  > **Done 2026-10-09 (PR #31).** Measured before the change: host-run `npm run dev`
+  > answered a POST with 500 "Missing Spotify credentials", and production answered with
+  > FastAPI's 404, so in practice only host dev could reach it. After: 404 from Next in
+  > host dev, and the build no longer lists the route.
   **How:** Delete `frontend/src/app/api/auth/spotify/route.ts`. It exchanges auth codes
   with `SPOTIFY_CLIENT_SECRET` from the frontend environment and returns raw tokens to
   the browser. Nothing calls it, and in production nginx sends `/api/` to the backend so

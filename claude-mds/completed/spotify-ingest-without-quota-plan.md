@@ -228,7 +228,7 @@ The current flow is: OAuth → [`get_top_tracks`](../../backend/app/services/spo
   blast radius is large)*
   **How:** Remove the `/auth/spotify/login` + `/auth/spotify/callback` routes, and
   **delete the dead Next.js route
-  [`frontend/src/app/api/auth/spotify/route.ts`](../../frontend/src/app/api/auth/spotify/route.ts)**
+  `frontend/src/app/api/auth/spotify/route.ts`** (deleted in 0.0.1 A0)
   — it exchanges auth codes with `SPOTIFY_CLIENT_SECRET` in the *frontend* env and
   returns raw tokens to the browser; unused, and a standing leak risk. Service + token
   columns stay dormant for a future "connect". In
