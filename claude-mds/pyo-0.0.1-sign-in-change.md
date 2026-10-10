@@ -265,7 +265,18 @@ before any new kind of account.
   8–128 characters. Never log a password or a hash.
   **Why:** A one-way KDF is the standard for credentials.
 
-- [ ] **A3. The one-path resolver.** *(S)*
+- [x] **A3. The one-path resolver.** *(S)*
+  > **Done 2026-10-09 (PR #36), `app/core/accounts.py`.** Decided in review: the messages
+  > live in the resolver (each conflict carries its text and a short `code` for A6's
+  > `?error=`), and the resolver performs the Spotify-to-Google link itself and commits
+  > it. Added after verification: a Google sign-in reaching a Google-owned account by
+  > email with a **different** `google_id` is refused (`google_mismatch`, logged at
+  > WARNING with the account id only), because A6's `sub`-first lookup means that row
+  > belongs to another Google account; `google_sub` is required on every Google call.
+  > **For A5 and A6:** `None` from `resolve_user` is not a reservation. A concurrent
+  > sign-up surfaces as an `IntegrityError` at the insert (`users_email_key`, or
+  > `uq_users_email_lower` for a case variant); roll back, never log it (the text holds
+  > the address), answer "already exists", and for Google resolve again.
   **How:** `resolve_user(db, email, provider)`, used by register, password login and the
   Google callback:
   - no row for the normalized email: the caller may create one;
